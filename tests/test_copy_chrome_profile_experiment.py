@@ -170,6 +170,53 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
                 with self.subTest(directory=directory):
                     self.assertFalse((copied_profile / directory).exists())
 
+    def test_copy_refuses_symlinks_to_files_outside_the_selected_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            destination = root / "clone"
+            outside_file = root / "outside.txt"
+            create_source(source)
+            outside_file.write_text("external data", encoding="utf-8")
+            (source / "Default" / "external-link").symlink_to(outside_file)
+
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                copy_chrome_profile(source, "Default", destination)
+
+            self.assertFalse(destination.exists())
+            self.assertEqual(outside_file.read_text(encoding="utf-8"), "external data")
+
+    def test_copy_refuses_selected_profile_directory_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            destination = root / "clone"
+            outside_profile = root / "outside-profile"
+            create_source(source)
+            (source / "Default").rename(outside_profile)
+            (source / "Default").symlink_to(outside_profile, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                copy_chrome_profile(source, "Default", destination)
+
+            self.assertFalse(destination.exists())
+
+    def test_copy_refuses_local_state_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            destination = root / "clone"
+            outside_state = root / "outside-state"
+            create_source(source)
+            local_state = source / "Local State"
+            local_state.rename(outside_state)
+            local_state.symlink_to(outside_state)
+
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                copy_chrome_profile(source, "Default", destination)
+
+            self.assertFalse(destination.exists())
+
     def test_copy_does_not_modify_source_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

@@ -34,6 +34,8 @@ def _is_supported_profile_directory(profile_directory: str) -> bool:
 def _load_filtered_local_state(
     local_state_path: Path, profile_directory: str
 ) -> dict[str, object]:
+    if local_state_path.is_symlink():
+        raise ValueError("Chrome profile contains a symbolic link; copy refused.")
     try:
         local_state = json.loads(local_state_path.read_text(encoding="utf-8"))
     except OSError, UnicodeError, json.JSONDecodeError:
@@ -60,7 +62,11 @@ def _load_filtered_local_state(
 
 
 def _ignore_extension_directories(_directory: str, names: list[str]) -> set[str]:
-    return set(_EXTENSION_DIRECTORIES.intersection(names))
+    ignored_extensions = set(_EXTENSION_DIRECTORIES.intersection(names))
+    for name in names:
+        if name not in ignored_extensions and (Path(_directory) / name).is_symlink():
+            raise ValueError("Chrome profile contains a symbolic link; copy refused.")
+    return ignored_extensions
 
 
 def copy_chrome_profile(
@@ -96,6 +102,8 @@ def copy_chrome_profile(
         raise RuntimeError("Close Chrome before copying its profile.")
 
     profile_source = source / profile_directory
+    if profile_source.is_symlink():
+        raise ValueError("Chrome profile contains a symbolic link; copy refused.")
     if not profile_source.is_dir():
         raise ValueError("Selected Chrome profile directory is unavailable.")
 

@@ -24,11 +24,11 @@ class CredentialsTests(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=True):
                 credentials = load_credentials(env_file)
 
-        self.assertEqual(credentials.username, "12345678901")
-        self.assertEqual(credentials.password, "example-secret")
+        self.assertEqual(credentials.username.get_secret_value(), "12345678901")
+        self.assertEqual(credentials.password.get_secret_value(), "example-secret")
         self.assertNotIn("example-secret", repr(credentials))
 
-    def test_environment_values_override_env_file(self) -> None:
+    def test_env_file_values_override_generic_environment_variables(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / ".env"
             env_file.write_text(
@@ -41,8 +41,24 @@ class CredentialsTests(unittest.TestCase):
             ):
                 credentials = load_credentials(env_file)
 
-        self.assertEqual(credentials.username, "environment-user")
-        self.assertEqual(credentials.password, "environment-password")
+        self.assertEqual(credentials.username.get_secret_value(), "file-user")
+        self.assertEqual(credentials.password.get_secret_value(), "file-password")
+
+    def test_environment_variables_are_fallback_when_env_file_is_empty(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(
+                os.environ,
+                {"USERNAME": "fallback-user", "PASSWORD": "fallback-password"},
+                clear=True,
+            ),
+        ):
+            env_file = Path(directory) / ".env"
+            env_file.write_text("", encoding="utf-8")
+            credentials = load_credentials(env_file)
+
+        self.assertEqual(credentials.username.get_secret_value(), "fallback-user")
+        self.assertEqual(credentials.password.get_secret_value(), "fallback-password")
 
     def test_missing_credentials_error_does_not_include_values(self) -> None:
         with (
@@ -54,31 +70,35 @@ class CredentialsTests(unittest.TestCase):
 
 
 class GovBrLoginTests(unittest.IsolatedAsyncioTestCase):
-    async def test_password_and_submit_wait_for_manual_captcha_completion(self) -> None:
+    async def test_clicks_continue_before_waiting_for_visible_captcha(self) -> None:
         events: list[str] = []
         page = MagicMock(spec=Page)
         username_field = MagicMock()
         username_field.fill = AsyncMock(side_effect=lambda _: events.append("username"))
         captcha_frames = MagicMock()
-        captcha_frames.count = AsyncMock(return_value=1)
+        captcha_frames.count = AsyncMock(return_value=2)
+        visible_captcha_frames = MagicMock()
+        visible_captcha_frames.count = AsyncMock(return_value=0)
         password_field = MagicMock()
         password_field.wait_for = AsyncMock(
             side_effect=lambda **_: events.append("password-visible")
         )
         password_field.fill = AsyncMock(side_effect=lambda _: events.append("password"))
+        password_form = MagicMock()
+        password_form.evaluate = AsyncMock(
+            side_effect=lambda _: events.append("submit")
+        )
         page.locator.side_effect = {
             "#accountId": username_field,
             'iframe[src*="hcaptcha.com"]': captcha_frames,
+            'iframe[src*="hcaptcha.com"]:visible': visible_captcha_frames,
             'input[type="password"]': password_field,
+            'form:has(input[type="password"])': password_form,
         }.__getitem__
-        page.wait_for_function = AsyncMock(
-            side_effect=lambda *_args, **_kwargs: events.append("captcha-passed")
-        )
+        page.wait_for_function = AsyncMock()
         continue_button = MagicMock()
         continue_button.click = AsyncMock(side_effect=lambda: events.append("continue"))
-        login_button = MagicMock()
-        login_button.click = AsyncMock(side_effect=lambda: events.append("submit"))
-        page.get_by_role.side_effect = [continue_button, login_button]
+        page.get_by_role.side_effect = [continue_button]
         page.wait_for_url = AsyncMock(
             side_effect=lambda *_args, **_kwargs: events.append("redirect")
         )
@@ -88,28 +108,40 @@ class GovBrLoginTests(unittest.IsolatedAsyncioTestCase):
 
         await authenticate_gov_br(page, credentials)
 
-        self.assertLess(events.index("username"), events.index("captcha-passed"))
-        self.assertLess(events.index("captcha-passed"), events.index("continue"))
+        self.assertLess(events.index("username"), events.index("continue"))
         self.assertLess(events.index("continue"), events.index("password-visible"))
         self.assertLess(events.index("password-visible"), events.index("password"))
         self.assertLess(events.index("password"), events.index("submit"))
         self.assertLess(events.index("submit"), events.index("redirect"))
+        page.wait_for_function.assert_not_awaited()
         username_field.fill.assert_awaited_once_with("12345678901")
         password_field.fill.assert_awaited_once_with("dummy-password")
+        page.locator.assert_any_call('form:has(input[type="password"])')
+        password_form.evaluate.assert_awaited_once()
+        self.assertIn(
+            "form.requestSubmit(submitButton)",
+            password_form.evaluate.await_args_list[0].args[0],
+        )
 
     async def test_does_not_wait_for_captcha_when_no_challenge_is_present(self) -> None:
         page = MagicMock(spec=Page)
         username_field = MagicMock()
         username_field.fill = AsyncMock()
         captcha_frames = MagicMock()
-        captcha_frames.count = AsyncMock(return_value=0)
+        captcha_frames.count = AsyncMock(return_value=2)
+        visible_captcha_frames = MagicMock()
+        visible_captcha_frames.count = AsyncMock(return_value=0)
         password_field = MagicMock()
         password_field.wait_for = AsyncMock()
         password_field.fill = AsyncMock()
+        password_form = MagicMock()
+        password_form.evaluate = AsyncMock()
         page.locator.side_effect = {
             "#accountId": username_field,
             'iframe[src*="hcaptcha.com"]': captcha_frames,
+            'iframe[src*="hcaptcha.com"]:visible': visible_captcha_frames,
             'input[type="password"]': password_field,
+            'form:has(input[type="password"])': password_form,
         }.__getitem__
         page.wait_for_function = AsyncMock()
         page.get_by_role.side_effect = [
@@ -129,16 +161,22 @@ class GovBrLoginTests(unittest.IsolatedAsyncioTestCase):
         username_field = MagicMock()
         username_field.fill = AsyncMock()
         captcha_frames = MagicMock()
-        captcha_frames.count = AsyncMock(side_effect=[0, 1])
+        captcha_frames.count = AsyncMock(return_value=2)
+        visible_captcha_frames = MagicMock()
+        visible_captcha_frames.count = AsyncMock(return_value=1)
         password_field = MagicMock()
         password_field.wait_for = AsyncMock(
             side_effect=[PlaywrightTimeoutError("password not yet visible"), None]
         )
         password_field.fill = AsyncMock()
+        password_form = MagicMock()
+        password_form.evaluate = AsyncMock()
         page.locator.side_effect = {
             "#accountId": username_field,
             'iframe[src*="hcaptcha.com"]': captcha_frames,
+            'iframe[src*="hcaptcha.com"]:visible': visible_captcha_frames,
             'input[type="password"]': password_field,
+            'form:has(input[type="password"])': password_form,
         }.__getitem__
         page.wait_for_function = AsyncMock()
         continue_button = MagicMock()
@@ -154,6 +192,7 @@ class GovBrLoginTests(unittest.IsolatedAsyncioTestCase):
 
         page.wait_for_function.assert_awaited_once()
         self.assertEqual(continue_button.click.await_count, 2)
+        visible_captcha_frames.count.assert_awaited_once()
 
 
 if __name__ == "__main__":

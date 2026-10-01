@@ -107,6 +107,31 @@ class BrowserModuleTests(unittest.TestCase):
         )
 
 
+class CliLoginTests(unittest.TestCase):
+    def test_login_option_runs_authentication_without_extractor(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from scdp_automation import cli
+
+        login_coroutine = object()
+        with (
+            patch("sys.argv", ["scdp-extrair", "--login"]),
+            patch(
+                "scdp_automation.cli.login_only",
+                new=MagicMock(return_value=login_coroutine),
+            ) as login,
+            patch(
+                "scdp_automation.cli.run", return_value="extract-coroutine"
+            ) as extract,
+            patch("scdp_automation.cli.asyncio.run") as run_async,
+        ):
+            cli.main()
+
+        login.assert_called_once_with()
+        run_async.assert_called_once_with(login_coroutine)
+        extract.assert_not_called()
+
+
 class SafeFailureTests(unittest.IsolatedAsyncioTestCase):
     async def test_query_failure_does_not_expose_original_exception_text(self) -> None:
         from unittest.mock import AsyncMock, MagicMock, patch

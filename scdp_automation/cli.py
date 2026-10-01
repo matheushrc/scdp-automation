@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from playwright.async_api import async_playwright
 
-from scdp_automation.extrator import run
+from scdp_automation.extrator import run, start_login_if_needed, wait_for_login
 from scdp_automation.logging_config import configure_logging, logger
 from scdp_automation.navegador_chrome import connect_visible_chrome
 
@@ -31,14 +31,50 @@ async def open_browser() -> None:
         await asyncio.Event().wait()
 
 
+async def login_only() -> None:
+    """Autentica no gov.br e retorna ao SCDP sem iniciar a extração."""
+    configure_logging()
+    profile = Path(__file__).resolve().parents[1] / ".scdp-browser"
+    async with async_playwright() as playwright:
+        browser = await connect_visible_chrome(playwright, profile)
+        if not browser.contexts:
+            raise RuntimeError("O Chrome conectado não expôs um contexto padrão.")
+        context = browser.contexts[0]
+        pages = context.pages
+        page = next(
+            (
+                candidate
+                for candidate in pages
+                if urlsplit(candidate.url).hostname
+                in {"www2.scdp.gov.br", "sso.acesso.gov.br", "acesso.gov.br"}
+            ),
+            pages[0] if pages else await context.new_page(),
+        )
+        await page.bring_to_front()
+        if urlsplit(page.url).hostname not in {
+            "www2.scdp.gov.br",
+            "sso.acesso.gov.br",
+            "acesso.gov.br",
+        }:
+            await page.goto(SCDP_URL, wait_until="domcontentloaded")
+        await start_login_if_needed(page)
+        await wait_for_login(page)
+        logger.info("Login concluído; extração não iniciada.")
+        # Encerrar o Playwright desconecta a automação; mantém o Chrome visível.
+
+
 def main() -> None:
     """Executa o extrator com os argumentos recebidos do terminal."""
     import argparse
 
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--abrir-navegador", action="store_true")
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--abrir-navegador", action="store_true")
+    actions.add_argument("--login", action="store_true")
     known, _ = parser.parse_known_args()
-    if known.abrir_navegador:
+    if known.login:
+        asyncio.run(login_only())
+    elif known.abrir_navegador:
         asyncio.run(open_browser())
     else:
         asyncio.run(run())

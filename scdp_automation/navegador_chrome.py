@@ -85,6 +85,8 @@ async def connect_visible_chrome(playwright: Playwright, profile: Path) -> Brows
         "--profile-directory=Default",
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={port}",
+        "--disable-extensions",
+        "--disable-component-extensions-with-background-pages",
         "--no-first-run",
         "about:blank",
         stdin=asyncio.subprocess.DEVNULL,

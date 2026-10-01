@@ -17,6 +17,7 @@ wheels/
 /output/
 /logs/
 /.scdp-browser*
+/.scdp-config.toml
 *.csv
 *.log
 

@@ -14,6 +14,7 @@ from playwright.async_api import Locator, Page, async_playwright
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from scdp_automation.autenticacao import authenticate_gov_br, load_credentials
+from scdp_automation.chrome_profile_setup import selected_profile_directory
 from scdp_automation.logging_config import configure_logging
 from scdp_automation.navegador_chrome import connect_visible_chrome
 from scdp_automation.relatorio import Viagem, load_trips, parse_report_rows, save_json
@@ -27,7 +28,7 @@ def resolve_report_url(current_url: str, report_href: str) -> str:
     return urljoin(current_url, report_href)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Gera JSON validado das viagens do relatório Viagem do SCDP."
     )
@@ -37,7 +38,7 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Limita as novas PCDPs desta execução (0 = todas as pendentes).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.limite < 0:
         parser.error("--limite não pode ser negativo.")
     args.output = DEFAULT_OUTPUT
@@ -350,22 +351,23 @@ async def collect_pending_descriptions(
             logger.info("Descrição {} de {} gravada.", index, len(pending))
 
 
-async def run() -> None:
+async def run(argv: list[str] | None = None) -> None:
     configure_logging()
-    args = parse_args()
+    args = parse_args(argv)
     output = args.output
     previous = {v.numero_da_solicitacao: v for v in load_trips(output)}
 
     async with async_playwright() as playwright:
         # Todas as abas usam o mesmo perfil Chrome e a mesma sessão autenticada.
         user_data_dir = Path(__file__).resolve().parents[1] / ".scdp-browser"
+        profile_directory = selected_profile_directory(user_data_dir)
         if (
-            not (user_data_dir / "Default").is_dir()
+            not (user_data_dir / profile_directory).is_dir()
             or not (user_data_dir / "Local State").is_file()
         ):
             raise RuntimeError(
-                "A cópia local do perfil Your Chrome está incompleta em "
-                f"{user_data_dir}. Copie Default e Local State do perfil original."
+                "A cópia local do perfil Chrome selecionado está incompleta em "
+                f"{user_data_dir}. Confirme que o perfil selecionado e Local State existem."
             )
         logger.info("Abrindo ou conectando ao Chrome visível.")
         browser = await connect_visible_chrome(playwright, user_data_dir)

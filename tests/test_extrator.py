@@ -232,6 +232,21 @@ class BrowserModuleTests(unittest.TestCase):
 
 
 class CliLoginTests(unittest.TestCase):
+    def test_help_does_not_trigger_profile_selection(self) -> None:
+        from unittest.mock import patch
+
+        from scdp_automation import cli
+
+        with (
+            patch("sys.argv", ["scdp-extrair", "--help"]),
+            patch("scdp_automation.cli.prepare_chrome_profile") as prepare_profile,
+            self.assertRaises(SystemExit) as raised,
+        ):
+            cli.main()
+
+        self.assertEqual(raised.exception.code, 0)
+        prepare_profile.assert_not_called()
+
     def test_login_option_runs_authentication_without_extractor(self) -> None:
         from unittest.mock import MagicMock, patch
 
@@ -244,6 +259,7 @@ class CliLoginTests(unittest.TestCase):
                 "scdp_automation.cli.login_only",
                 new=MagicMock(return_value=login_coroutine),
             ) as login,
+            patch("scdp_automation.cli.prepare_chrome_profile") as prepare_profile,
             patch(
                 "scdp_automation.cli.run", return_value="extract-coroutine"
             ) as extract,
@@ -252,8 +268,66 @@ class CliLoginTests(unittest.TestCase):
             cli.main()
 
         login.assert_called_once_with()
+        prepare_profile.assert_called_once()
         run_async.assert_called_once_with(login_coroutine)
         extract.assert_not_called()
+
+    def test_profile_selection_runs_before_login_action(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from scdp_automation import cli
+
+        login_coroutine = object()
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "scdp-extrair",
+                    "--selecionar-perfil-chrome",
+                    "--login",
+                ],
+            ),
+            patch("scdp_automation.cli.prepare_chrome_profile") as prepare_profile,
+            patch(
+                "scdp_automation.cli.login_only",
+                new=MagicMock(return_value=login_coroutine),
+            ) as login,
+            patch("scdp_automation.cli.asyncio.run") as run_async,
+        ):
+            cli.main()
+
+        prepare_profile.assert_called_once()
+        self.assertTrue(prepare_profile.call_args.kwargs["force_reselect"])
+        login.assert_called_once_with()
+        run_async.assert_called_once_with(login_coroutine)
+
+    def test_profile_selector_flag_is_removed_before_extractor_arguments(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from scdp_automation import cli
+
+        extraction_coroutine = object()
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "scdp-extrair",
+                    "--selecionar-perfil-chrome",
+                    "--limite",
+                    "2",
+                ],
+            ),
+            patch("scdp_automation.cli.prepare_chrome_profile"),
+            patch(
+                "scdp_automation.cli.run",
+                new=MagicMock(return_value=extraction_coroutine),
+            ) as extract,
+            patch("scdp_automation.cli.asyncio.run") as run_async,
+        ):
+            cli.main()
+
+        extract.assert_called_once_with(["--limite", "2"])
+        run_async.assert_called_once_with(extraction_coroutine)
 
 
 class SafeFailureTests(unittest.IsolatedAsyncioTestCase):

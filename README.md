@@ -24,6 +24,24 @@ USERNAME=seu-cpf
 PASSWORD=sua-senha
 ```
 
+Na primeira execução, o terminal lista os perfis Chrome encontrados para o
+usuário atual. Use as setas e Enter para escolher; Escape cancela. O nome e o
+e-mail exibidos vêm dos metadados locais do Chrome, e o e-mail fica vazio quando
+o perfil não tem um associado. O script copia o perfil escolhido para
+`.scdp-browser/` sem extensões e grava o caminho de origem e o e-mail em
+`.scdp-config.toml`, ignorados pelo Git. Essa configuração local não substitui
+as credenciais de `.env`.
+
+Feche todas as janelas do Chrome antes da primeira cópia ou de trocar o perfil
+salvo. Para trocar o perfil, execute:
+
+```sh
+uv run python -m scdp_automation --selecionar-perfil-chrome
+```
+
+Também é possível combinar essa opção com `--login` ou `--abrir-navegador`.
+Nas execuções seguintes, o clone local é reutilizado.
+
 O extrator preenche o CPF na página gov.br, aguarda você resolver o CAPTCHA
 na janela visível, preenche a senha e envia o formulário. Também é possível
 definir `USERNAME` e `PASSWORD` no ambiente como fallback quando as respectivas
@@ -80,4 +98,4 @@ uv run ruff format --check .
 uv run ty check
 ```
 
-O ty valida tipos; ele não formata nem reescreve imports. Os arquivos em `input/`, `output/`, `logs/`, o perfil `.scdp-browser/` e `.env` são locais e ignorados pelo Git. Não publique planilhas, resultados de viagem, credenciais ou dados de sessão.
+O ty valida tipos; ele não formata nem reescreve imports. Os arquivos em `input/`, `output/`, `logs/`, o perfil `.scdp-browser/`, `.scdp-config.toml` e `.env` são locais e ignorados pelo Git. Não publique planilhas, resultados de viagem, credenciais ou dados de sessão.

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scdp_automation.chrome_profile_setup import ProfileSetupError
 from scripts.experiments.copy_chrome_profile import copy_chrome_profile
 
 EXTENSION_DIRECTORIES = (
@@ -73,17 +74,11 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
             source = root / "source"
             destination = root / "clone"
             create_source(source)
-            script = (
-                Path(__file__).resolve().parents[1]
-                / "scripts"
-                / "experiments"
-                / "copy_chrome_profile.py"
-            )
-
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(script),
+                    "-m",
+                    "scripts.experiments.copy_chrome_profile",
                     "--source-user-data-dir",
                     str(source),
                     "--profile-directory",
@@ -180,7 +175,7 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
             outside_file.write_text("external data", encoding="utf-8")
             (source / "Default" / "external-link").symlink_to(outside_file)
 
-            with self.assertRaisesRegex(ValueError, "symbolic link"):
+            with self.assertRaisesRegex(ProfileSetupError, "symbolic link"):
                 copy_chrome_profile(source, "Default", destination)
 
             self.assertFalse(destination.exists())
@@ -196,7 +191,7 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
             (source / "Default").rename(outside_profile)
             (source / "Default").symlink_to(outside_profile, target_is_directory=True)
 
-            with self.assertRaisesRegex(ValueError, "symbolic link"):
+            with self.assertRaisesRegex(ProfileSetupError, "symbolic link"):
                 copy_chrome_profile(source, "Default", destination)
 
             self.assertFalse(destination.exists())
@@ -212,7 +207,7 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
             local_state.rename(outside_state)
             local_state.symlink_to(outside_state)
 
-            with self.assertRaisesRegex(ValueError, "symbolic link"):
+            with self.assertRaisesRegex(ProfileSetupError, "symbolic link"):
                 copy_chrome_profile(source, "Default", destination)
 
             self.assertFalse(destination.exists())
@@ -278,7 +273,7 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
                     )
                 destination = root / "clone"
 
-                with self.assertRaises((TypeError, ValueError)):
+                with self.assertRaises(ProfileSetupError):
                     copy_chrome_profile(source, "Default", destination)
 
                 self.assertFalse(destination.exists())
@@ -296,7 +291,7 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
             ):
                 with self.subTest(profile_directory=profile_directory):
                     destination = root / "clone"
-                    with self.assertRaises(ValueError):
+                    with self.assertRaises(ProfileSetupError):
                         copy_chrome_profile(source, profile_directory, destination)
                     self.assertFalse(destination.exists())
 
@@ -308,7 +303,7 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
             destination = source / "clone"
             before = snapshot_tree(source)
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ProfileSetupError):
                 copy_chrome_profile(source, "Default", destination)
 
             self.assertEqual(snapshot_tree(source), before)

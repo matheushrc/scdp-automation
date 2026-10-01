@@ -5,14 +5,20 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import shutil
 import socket
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from playwright.async_api import Browser, Playwright
+
+from scdp_automation.chrome_profile_setup import selected_profile_directory
+
+SCDP_URL = "https://www2.scdp.gov.br/"
 
 
 def _free_local_port() -> int:
@@ -40,7 +46,7 @@ def _debugger_ready(port: int) -> bool:
 def _profile_lock_is_live(profile: Path) -> bool:
     lock = profile / "SingletonLock"
     if not lock.is_symlink():
-        return False
+        return lock.exists()
     try:
         pid = int(lock.resolve().name.rsplit("-", 1)[-1])
         os.kill(pid, 0)
@@ -54,9 +60,52 @@ def _profile_lock_is_live(profile: Path) -> bool:
     return True
 
 
+def resolve_chrome_executable(
+    platform_name: str | None = None,
+    environ: Mapping[str, str] | None = None,
+    path_lookup: Callable[[str], str | None] | None = None,
+) -> str:
+    """Find Chrome Stable without shelling through a platform-specific command."""
+    system = platform_name or platform.system()
+    environment = os.environ if environ is None else environ
+    lookup = shutil.which if path_lookup is None else path_lookup
+
+    if system in {"Windows", "nt"}:
+        candidates: list[Path] = []
+        for variable in (
+            "LOCALAPPDATA",
+            "PROGRAMFILES",
+            "PROGRAMFILES(X86)",
+            "PROGRAMW6432",
+        ):
+            base = environment.get(variable)
+            if base:
+                candidates.append(
+                    Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe"
+                )
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+        located = lookup("chrome.exe") or lookup("chrome")
+        if located:
+            return str(located)
+        raise RuntimeError("Não encontrei o executável do Google Chrome.")
+
+    if system in {"Linux", "posix"}:
+        located = lookup("google-chrome") or lookup("google-chrome-stable")
+        if located:
+            return str(located)
+        raise RuntimeError("Não encontrei o executável google-chrome no PATH.")
+
+    raise RuntimeError("A inicialização do Chrome não é suportada neste sistema.")
+
+
 async def connect_visible_chrome(playwright: Playwright, profile: Path) -> Browser:
     """Attach to the clone's live Chrome, starting ordinary headed Chrome if needed."""
     profile.mkdir(parents=True, exist_ok=True)
+    profile_directory = selected_profile_directory(profile)
+    if not (profile / profile_directory).is_dir():
+        raise RuntimeError("A cópia selecionada do perfil Chrome está incompleta.")
     port_file = profile / "cdp-port"
     if port_file.exists():
         try:
@@ -75,25 +124,34 @@ async def connect_visible_chrome(playwright: Playwright, profile: Path) -> Brows
             "existente para concluir a autenticação; a conexão CDP não está ativa."
         )
 
-    chrome = shutil.which("google-chrome")
-    if not chrome:
-        raise RuntimeError("Não encontrei o executável google-chrome no PATH.")
+    chrome = resolve_chrome_executable()
     port = _free_local_port()
-    process = await asyncio.create_subprocess_exec(
+    chrome_arguments = (
         chrome,
         f"--user-data-dir={profile.resolve()}",
-        "--profile-directory=Default",
+        f"--profile-directory={profile_directory}",
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={port}",
         "--disable-extensions",
         "--disable-component-extensions-with-background-pages",
         "--no-first-run",
-        "about:blank",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-        start_new_session=True,
+        SCDP_URL,
     )
+    if platform.system() != "Windows":
+        process = await asyncio.create_subprocess_exec(
+            *chrome_arguments,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    else:
+        process = await asyncio.create_subprocess_exec(
+            *chrome_arguments,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
     for _ in range(120):
         if _debugger_ready(port):
             port_file.write_text(f"{port}\n", encoding="ascii")

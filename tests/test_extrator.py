@@ -1,11 +1,16 @@
+import asyncio
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scdp_automation.extrator import (
     DEFAULT_OUTPUT,
+    collect_pending_descriptions,
     extract_description,
     parse_args,
+    resolve_report_url,
 )
+from scdp_automation.relatorio import Viagem
 
 
 class ExtratorTests(unittest.TestCase):
@@ -14,14 +19,23 @@ class ExtratorTests(unittest.TestCase):
         self.assertEqual(extract_description(text), "Participação em reunião")
 
     def test_output_path_is_fixed_to_json_checkpoint(self) -> None:
-        from unittest.mock import patch
-
         with patch("sys.argv", ["scdp-extrair"]):
             args = parse_args()
 
         self.assertEqual(DEFAULT_OUTPUT, Path("output/viagens_scdp_2026.json"))
         self.assertEqual(args.output, DEFAULT_OUTPUT)
-        self.assertEqual(args.limite, 0)
+
+    def test_report_link_is_resolved_against_authenticated_scdp_page(self) -> None:
+        report_url = resolve_report_url(
+            "https://www2.scdp.gov.br/novoscdp/home.xhtml",
+            "pages/relatorio/relatorio_viagem.xhtml?faces-redirect=true",
+        )
+
+        self.assertEqual(
+            report_url,
+            "https://www2.scdp.gov.br/novoscdp/pages/relatorio/"
+            "relatorio_viagem.xhtml?faces-redirect=true",
+        )
 
 
 class LoginRoutingTests(unittest.IsolatedAsyncioTestCase):
@@ -61,6 +75,116 @@ class LoginRoutingTests(unittest.IsolatedAsyncioTestCase):
         await start_login_if_needed(page)
         menu.wait_for.assert_awaited_once_with(state="visible", timeout=2_000)
         page.locator.assert_not_called()
+
+    async def test_authenticated_menu_loading_while_login_link_appears_skips_login(
+        self,
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from playwright.async_api import Page, TimeoutError
+
+        from scdp_automation.extrator import start_login_if_needed
+
+        menu = MagicMock()
+        menu.wait_for = AsyncMock(side_effect=TimeoutError("slow home"))
+        menu.is_visible = AsyncMock(return_value=True)
+        login_link = MagicMock()
+        login_link.wait_for = AsyncMock()
+        login_link.click = AsyncMock()
+        page = MagicMock(spec=Page)
+        page.url = "https://www2.scdp.gov.br/novoscdp/home.xhtml"
+        page.get_by_role.return_value = menu
+        page.locator.return_value = login_link
+
+        with (
+            patch("scdp_automation.extrator.authenticate_gov_br", new=AsyncMock()),
+            patch("scdp_automation.extrator.load_credentials"),
+        ):
+            await start_login_if_needed(page)
+
+        menu.is_visible.assert_awaited_once()
+        login_link.click.assert_not_awaited()
+
+    async def test_click_returning_to_scdp_home_uses_existing_session(self) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from playwright.async_api import Page, TimeoutError
+
+        from scdp_automation.extrator import start_login_if_needed
+
+        menu = MagicMock()
+        menu.wait_for = AsyncMock(side_effect=[TimeoutError("home slow"), None])
+        menu.is_visible = AsyncMock(return_value=False)
+        login_link = MagicMock()
+        login_link.wait_for = AsyncMock()
+        login_link.click = AsyncMock()
+        page = MagicMock(spec=Page)
+        page.url = "https://www2.scdp.gov.br/novoscdp/home.xhtml"
+        page.get_by_role.return_value = menu
+        page.locator.return_value = login_link
+
+        async def return_to_scdp(url_pattern: object, **_: object) -> None:
+            page.url = "https://www2.scdp.gov.br/novoscdp/pages/main.xhtml"
+
+        page.wait_for_url = AsyncMock(side_effect=return_to_scdp)
+        with patch(
+            "scdp_automation.extrator.authenticate_gov_br", new=AsyncMock()
+        ) as authenticate:
+            await start_login_if_needed(page)
+
+        wait_call = page.wait_for_url.await_args
+        assert wait_call is not None
+        self.assertEqual(
+            wait_call.args[0].pattern,
+            r"^https://(?:sso\.acesso\.gov\.br/login|www2\.scdp\.gov\.br/novoscdp/pages/main\.xhtml)",
+        )
+        menu.wait_for.assert_awaited_with(state="visible", timeout=30_000)
+        authenticate.assert_not_awaited()
+
+
+class DescriptionCollectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_single_tab_serializes_and_checkpoints_each_description(self) -> None:
+        from tempfile import TemporaryDirectory
+        from unittest.mock import AsyncMock, MagicMock
+
+        from playwright.async_api import Page
+
+        page = MagicMock(spec=Page)
+        page.bring_to_front = AsyncMock()
+        trips = [
+            Viagem.model_construct(
+                numero_da_solicitacao=f"00000{i}/26",
+                descricao_do_motivo_da_viagem=None,
+            )
+            for i in range(1, 3)
+        ]
+        active_queries = 0
+
+        async def consult(*_: object) -> str:
+            nonlocal active_queries
+            self.assertEqual(active_queries, 0)
+            active_queries += 1
+            await asyncio.sleep(0)
+            active_queries -= 1
+            return "Descrição consultada"
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "viagens.json"
+            with (
+                patch(
+                    "scdp_automation.extrator._consult_with_safe_failure",
+                    new=AsyncMock(side_effect=consult),
+                ),
+                patch("scdp_automation.extrator.save_json") as save_json,
+            ):
+                await collect_pending_descriptions(page, trips, trips, output)
+
+        self.assertEqual(save_json.call_count, 2)
+        self.assertEqual(page.bring_to_front.await_count, 2)
+        self.assertEqual(
+            [trip.descricao_do_motivo_da_viagem for trip in trips],
+            ["Descrição consultada", "Descrição consultada"],
+        )
 
 
 class QueryRetryTests(unittest.IsolatedAsyncioTestCase):

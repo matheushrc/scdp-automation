@@ -16,7 +16,7 @@ wheels/
 /input/
 /output/
 /logs/
-/.scdp-browser/
+/.scdp-browser*
 *.csv
 *.log
 

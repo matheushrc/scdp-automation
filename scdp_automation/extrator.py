@@ -22,6 +22,11 @@ SCDP_URL = "https://www2.scdp.gov.br/"
 DEFAULT_OUTPUT = Path("output/viagens_scdp_2026.json")
 
 
+def resolve_report_url(current_url: str, report_href: str) -> str:
+    """Resolve o link do relatório encontrado no menu autenticado do SCDP."""
+    return urljoin(current_url, report_href)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Gera JSON validado das viagens do relatório Viagem do SCDP."
@@ -112,7 +117,9 @@ async def open_annual_cch_report(page: Page) -> None:
     report_href = await report_link.get_attribute("href")
     if not report_href:
         raise RuntimeError("O link do relatório Viagem não possui href navegável.")
-    await page.goto(urljoin(page.url, report_href), wait_until="domcontentloaded")
+    await page.goto(
+        resolve_report_url(page.url, report_href), wait_until="domcontentloaded"
+    )
 
     await page.locator("#chkAnoExercicio").wait_for(state="visible")
     await select_cch(page)
@@ -290,11 +297,20 @@ async def start_login_if_needed(page: Page) -> None:
         pass
     login_link = page.locator('[id$=":linkLogarGovBR"]')
     await login_link.wait_for(state="visible", timeout=30_000)
+    if await reports_menu.is_visible():
+        return
     await login_link.click(force=True)
-    logger.info("Abrindo autenticação gov.br na janela visível.")
     await page.wait_for_url(
-        re.compile(r"^https://sso\.acesso\.gov\.br/login"), timeout=30_000
+        re.compile(
+            r"^https://(?:sso\.acesso\.gov\.br/login|"
+            r"www2\.scdp\.gov\.br/novoscdp/pages/main\.xhtml)"
+        ),
+        timeout=30_000,
     )
+    if urlsplit(page.url).hostname == "www2.scdp.gov.br":
+        await reports_menu.wait_for(state="visible", timeout=30_000)
+        return
+    logger.info("Abrindo autenticação gov.br na janela visível.")
     await authenticate_gov_br(page, load_credentials())
 
 
@@ -316,6 +332,24 @@ async def _consult_with_safe_failure(
         ) from None
 
 
+async def collect_pending_descriptions(
+    page: Page,
+    trips: list[Viagem],
+    pending: list[Viagem],
+    output: Path,
+) -> None:
+    """Consulta descrições em série e salva cada checkpoint."""
+    query_lock = asyncio.Lock()
+    for index, trip in enumerate(pending, start=1):
+        async with query_lock:
+            await page.bring_to_front()
+            trip.descricao_do_motivo_da_viagem = await _consult_with_safe_failure(
+                page, trip.numero_da_solicitacao, index, len(pending)
+            )
+            save_json(output, trips)
+            logger.info("Descrição {} de {} gravada.", index, len(pending))
+
+
 async def run() -> None:
     configure_logging()
     args = parse_args()
@@ -323,8 +357,7 @@ async def run() -> None:
     previous = {v.numero_da_solicitacao: v for v in load_trips(output)}
 
     async with async_playwright() as playwright:
-        # A cópia do perfil mantém os dados isolados do Chrome pessoal. Chrome
-        # é iniciado normalmente e o Playwright se conecta pela porta local.
+        # Todas as abas usam o mesmo perfil Chrome e a mesma sessão autenticada.
         user_data_dir = Path(__file__).resolve().parents[1] / ".scdp-browser"
         if (
             not (user_data_dir / "Default").is_dir()
@@ -377,12 +410,7 @@ async def run() -> None:
             len(trips),
             len(pending),
         )
-        for index, trip in enumerate(pending, start=1):
-            trip.descricao_do_motivo_da_viagem = await _consult_with_safe_failure(
-                page, trip.numero_da_solicitacao, index, len(pending)
-            )
-            save_json(output, trips)
-            logger.info("Descrição {} de {} gravada.", index, len(pending))
+        await collect_pending_descriptions(page, trips, pending, output)
         remaining = sum(v.descricao_do_motivo_da_viagem is None for v in trips)
         logger.info("JSON atualizado em {}.", output.resolve())
         logger.info("Descrições pendentes: {}.", remaining)

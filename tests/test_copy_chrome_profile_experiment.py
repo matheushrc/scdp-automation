@@ -263,7 +263,7 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
     def test_copy_rejects_missing_or_malformed_local_state_without_creating_destination(
         self,
     ) -> None:
-        for state_contents in (None, "not-json"):
+        for state_contents in (None, "not-json", json.dumps([])):
             with (
                 self.subTest(state_contents=state_contents),
                 tempfile.TemporaryDirectory() as temporary_directory,
@@ -278,7 +278,7 @@ class ChromeProfileCopyExperimentTests(unittest.TestCase):
                     )
                 destination = root / "clone"
 
-                with self.assertRaises(ValueError):
+                with self.assertRaises((TypeError, ValueError)):
                     copy_chrome_profile(source, "Default", destination)
 
                 self.assertFalse(destination.exists())

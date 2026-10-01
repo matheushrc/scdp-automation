@@ -26,8 +26,8 @@ PASSWORD=sua-senha
 
 O extrator preenche o CPF na página gov.br, aguarda você resolver o CAPTCHA
 na janela visível, preenche a senha e envia o formulário. Também é possível
-definir `USERNAME` e `PASSWORD` no ambiente; esses valores têm precedência
-sobre o arquivo.
+definir `USERNAME` e `PASSWORD` no ambiente como fallback quando as respectivas
+chaves não estiverem presentes no `.env`.
 
 Para abrir apenas o Chrome visível com o perfil local do projeto:
 
@@ -40,6 +40,15 @@ Para executar a coleta, em outro terminal na raiz do projeto:
 ```sh
 uv run python -m scdp_automation
 ```
+
+Para autenticar sem iniciar a coleta, execute:
+
+```sh
+uv run python -m scdp_automation --login
+```
+
+Esse comando para após voltar ao SCDP autenticado. Ele não abre relatórios nem
+cria ou atualiza o JSON de viagens.
 
 Se for solicitado, o extrator clica em **Entrar com gov.br**. O CPF e a senha vêm da configuração local; resolva o CAPTCHA manualmente na janela visível. O extrator aguarda o retorno ao SCDP autenticado e a aparição do menu **RELATÓRIOS**. Em seguida, abre **RELATÓRIOS > Viagem**, confirma CCH — Campus Chapecó/SC (código `121766`), marca **Todas as viagens do ano de exercício** e pesquisa. Mantenha a janela do Chrome aberta enquanto a coleta estiver em execução.
 

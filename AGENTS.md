@@ -11,6 +11,8 @@ through that local session.
 Click **Entrar com gov.br** automatically when login is needed. Load `USERNAME`
 and `PASSWORD` from the local `.env` file, enter them in the visible browser,
 and leave CAPTCHA and other authentication challenges to the operator.
+Use `uv run python -m scdp_automation --login` to authenticate without starting
+the report extraction.
 
 ## Build, Test, and Development Commands
 

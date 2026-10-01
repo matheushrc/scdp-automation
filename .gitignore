@@ -1,0 +1,29 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments and local credentials
+.venv/
+.env
+.env.*
+!.env.example
+
+# Private input and generated/local data
+/input/
+/output/
+/logs/
+/.scdp-browser/
+*.csv
+*.log
+
+# Tool caches and OS files
+.ruff_cache/
+.DS_Store
+
+# Legacy generated files
+/viagens_scdp_export.json
+/viagens_scdp_2026.json

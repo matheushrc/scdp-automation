@@ -239,6 +239,50 @@ class ProfilePreparationTests(unittest.TestCase):
         self.assertEqual(config_path.read_bytes(), old_config_bytes)
         self.assertFalse(list(self.repo_root.glob(".scdp-browser.backup-*")))
 
+    def test_incomplete_staging_copy_preserves_current_clone_and_config(self) -> None:
+        clone = self.repo_root / ".scdp-browser"
+        clone.mkdir()
+        (clone / "sentinel").write_text("original", encoding="utf-8")
+        config_path = self.repo_root / ".scdp-config.toml"
+        config = ProfileConfig(str(self.user_data_dir / "Profile 2"), "")
+        write_profile_config(config_path, config)
+        old_config_bytes = config_path.read_bytes()
+
+        def create_incomplete_copy(
+            _source: Path, _directory: str, destination: Path
+        ) -> None:
+            (destination / "Profile 2").mkdir(parents=True)
+            invalid_local_state = {
+                "profile": {
+                    "info_cache": {"Default": {}},
+                    "last_used": "Default",
+                    "last_active_profiles": ["Default"],
+                }
+            }
+            (destination / "Local State").write_text(
+                json.dumps(invalid_local_state), encoding="utf-8"
+            )
+            (destination / ".scdp-profile-directory").write_text(
+                "Profile 2\n", encoding="utf-8"
+            )
+
+        with (
+            patch(
+                "scdp_automation.chrome_profile_setup.copy_chrome_profile",
+                side_effect=create_incomplete_copy,
+            ),
+            self.assertRaisesRegex(ProfileSetupError, "incomplete"),
+        ):
+            prepare_chrome_profile(
+                self.repo_root,
+                process_checker=lambda: False,
+            )
+
+        self.assertEqual((clone / "sentinel").read_text(encoding="utf-8"), "original")
+        self.assertEqual(config_path.read_bytes(), old_config_bytes)
+        self.assertFalse(list(self.repo_root.glob(".scdp-browser.backup-*")))
+        self.assertFalse(list(self.repo_root.glob(".scdp-browser.candidate-*")))
+
 
 class ChromeProcessDetectionTests(unittest.TestCase):
     def test_linux_process_detection_reads_proc_comm(self) -> None:

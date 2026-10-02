@@ -161,6 +161,33 @@ def _clone_is_complete(clone_path: Path) -> bool:
         return False
 
 
+def _staged_clone_is_complete(clone_path: Path) -> bool:
+    if not _clone_is_complete(clone_path):
+        return False
+    try:
+        directory_name = selected_profile_directory(clone_path)
+        local_state = json.loads(
+            (clone_path / "Local State").read_text(encoding="utf-8")
+        )
+    except OSError, UnicodeError, ValueError, ProfileSetupError:
+        return False
+
+    profile_state = local_state.get("profile")
+    if not isinstance(profile_state, dict):
+        return False
+    info_cache = profile_state.get("info_cache")
+    if not isinstance(info_cache, dict):
+        return False
+    if any(profile_name != directory_name for profile_name in info_cache):
+        return False
+    selected_metadata = info_cache.get(directory_name)
+    if selected_metadata is not None and not isinstance(selected_metadata, dict):
+        return False
+    return profile_state.get("last_used") == directory_name and profile_state.get(
+        "last_active_profiles"
+    ) == [directory_name]
+
+
 def _load_filtered_local_state(
     local_state_path: Path, profile_directory: str
 ) -> dict[str, object]:
@@ -372,6 +399,10 @@ def _install_profile(
         raise ProfileSetupError(
             "Could not stage the selected Chrome profile."
         ) from None
+
+    if not _staged_clone_is_complete(staged_clone):
+        _remove_path(staged_clone)
+        raise ProfileSetupError("The staged Chrome profile copy is incomplete.")
 
     backup_path: Path | None = None
     try:

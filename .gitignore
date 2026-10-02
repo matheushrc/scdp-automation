@@ -21,6 +21,7 @@ wheels/
 *.log
 
 # Tool caches and OS files
+.worktrees/
 .ruff_cache/
 .DS_Store
 

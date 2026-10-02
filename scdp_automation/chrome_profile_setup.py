@@ -9,7 +9,9 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 import tomllib
 import uuid
 from collections.abc import Callable
@@ -380,6 +382,26 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
+def _wait_for_chrome_to_close(process_checker: Callable[[], bool]) -> None:
+    waiting = False
+    while process_checker():
+        if not waiting:
+            print(
+                "O Chrome está aberto. Feche todas as janelas para continuar a "
+                "cópia; aguardando (Ctrl+C cancela)...",
+                file=sys.stderr,
+                flush=True,
+            )
+            waiting = True
+        time.sleep(1)
+    if waiting:
+        print(
+            "Chrome fechado. Continuando a cópia do perfil.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _install_profile(
     profile: ChromeProfile,
     repo_root: Path,
@@ -387,8 +409,7 @@ def _install_profile(
     clone_path: Path,
     process_checker: Callable[[], bool],
 ) -> Path:
-    if process_checker():
-        raise ProfileSetupError("Feche todas as janelas do Chrome antes da cópia.")
+    _wait_for_chrome_to_close(process_checker)
 
     staged_clone = repo_root / f".{clone_path.name}.candidate-{uuid.uuid4().hex}"
     try:

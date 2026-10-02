@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -173,6 +174,123 @@ class ChromeProfileSelectionTests(unittest.TestCase):
 
         self.assertEqual(selected, self.profiles[1])
         self.assertIn("chief@example.com", output.getvalue())
+
+    @unittest.skipUnless(os.name == "posix", "requires a POSIX pseudo-terminal")
+    def test_posix_menu_lines_return_to_column_zero(self) -> None:
+        import errno
+        import pty
+        import select as select_module
+        import time
+
+        child_pid, master_fd = pty.fork()
+        if child_pid == 0:
+            selected = select_profile(self.profiles)
+            os.write(1, f"SELECTED={selected.directory_name}\n".encode())
+            os._exit(0)
+
+        rendered = bytearray()
+        child_status: int | None = None
+        try:
+            prompt_deadline = time.monotonic() + 3
+            while b"Esc cancela" not in rendered and time.monotonic() < prompt_deadline:
+                ready, _, _ = select_module.select([master_fd], [], [], 0.1)
+                if ready:
+                    try:
+                        rendered.extend(os.read(master_fd, 4096))
+                    except OSError as error:
+                        if error.errno != errno.EIO:
+                            raise
+                        break
+
+            self.assertIn(b"Esc cancela", rendered)
+            os.write(master_fd, b"\r")
+            selection_deadline = time.monotonic() + 3
+            while (
+                b"SELECTED=Default" not in rendered
+                and time.monotonic() < selection_deadline
+            ):
+                ready, _, _ = select_module.select([master_fd], [], [], 0.1)
+                if ready:
+                    try:
+                        rendered.extend(os.read(master_fd, 4096))
+                    except OSError as error:
+                        if error.errno != errno.EIO:
+                            raise
+                        break
+                waited, status = os.waitpid(child_pid, os.WNOHANG)
+                if waited:
+                    child_status = status
+                    break
+        finally:
+            if child_status is None:
+                try:
+                    os.kill(child_pid, 9)
+                except ProcessLookupError:
+                    pass
+                _, child_status = os.waitpid(child_pid, 0)
+            os.close(master_fd)
+
+        self.assertEqual(os.waitstatus_to_exitcode(child_status), 0)
+        self.assertIn(b"\r\n\r\n> Default", rendered)
+
+    @unittest.skipUnless(os.name == "posix", "requires a POSIX pseudo-terminal")
+    def test_posix_arrow_sequence_selects_next_profile(self) -> None:
+        import errno
+        import pty
+        import select as select_module
+        import time
+
+        child_pid, master_fd = pty.fork()
+        if child_pid == 0:
+            selected = select_profile(self.profiles)
+            os.write(1, f"SELECTED={selected.directory_name}\n".encode())
+            os._exit(0)
+
+        output = bytearray()
+        child_status: int | None = None
+        try:
+            prompt_deadline = time.monotonic() + 3
+            while b"Esc cancela" not in output and time.monotonic() < prompt_deadline:
+                ready, _, _ = select_module.select([master_fd], [], [], 0.1)
+                if not ready:
+                    continue
+                try:
+                    output.extend(os.read(master_fd, 4096))
+                except OSError as error:
+                    if error.errno != errno.EIO:
+                        raise
+                    break
+
+            self.assertIn(b"Esc cancela", output)
+            os.write(master_fd, b"\x1b[B\r")
+            selection_deadline = time.monotonic() + 3
+            while (
+                b"SELECTED=Profile 2" not in output
+                and time.monotonic() < selection_deadline
+            ):
+                ready, _, _ = select_module.select([master_fd], [], [], 0.1)
+                if ready:
+                    try:
+                        output.extend(os.read(master_fd, 4096))
+                    except OSError as error:
+                        if error.errno != errno.EIO:
+                            raise
+                        break
+                waited, status = os.waitpid(child_pid, os.WNOHANG)
+                if waited:
+                    child_status = status
+                    break
+        finally:
+            if child_status is None:
+                try:
+                    os.kill(child_pid, 9)
+                except ProcessLookupError:
+                    pass
+                _, child_status = os.waitpid(child_pid, 0)
+            os.close(master_fd)
+
+        self.assertEqual(os.waitstatus_to_exitcode(child_status), 0)
+        self.assertIn(b"SELECTED=Profile 2", output)
 
     def test_escape_cancels_selection(self) -> None:
         with self.assertRaises(ProfileSelectionCancelled):

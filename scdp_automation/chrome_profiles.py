@@ -170,19 +170,19 @@ def _terminal_key_reader(stream: TextIO) -> Iterator[Callable[[], str]]:
     descriptor = stream.fileno()
     previous_settings = termios.tcgetattr(descriptor)
     try:
-        tty.setraw(descriptor)
+        tty.setcbreak(descriptor)
 
         def read_posix_key() -> str:
-            character = stream.read(1)
-            if character in {"\r", "\n"}:
+            character = os.read(descriptor, 1)
+            if character in {b"\r", b"\n"}:
                 return "enter"
-            if character != "\x1b":
+            if character != b"\x1b":
                 return "other"
-            if not select.select([stream], [], [], 0.1)[0]:
+            if not select.select([descriptor], [], [], 0.1)[0]:
                 return "escape"
-            if stream.read(1) != "[":
+            if os.read(descriptor, 1) != b"[":
                 return "escape"
-            return {"A": "up", "B": "down"}.get(stream.read(1), "other")
+            return {b"A": "up", b"B": "down"}.get(os.read(descriptor, 1), "other")
 
         yield read_posix_key
     finally:

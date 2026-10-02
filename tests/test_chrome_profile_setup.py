@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -187,26 +188,42 @@ class ProfilePreparationTests(unittest.TestCase):
         self.assertFalse((clone / "old-data").exists())
         self.assertTrue((clone / "Profile 2").is_dir())
 
-    def test_running_chrome_prevents_copy_without_changing_current_clone(self) -> None:
+    def test_waits_for_chrome_to_close_before_copying(self) -> None:
         clone = self.repo_root / ".scdp-browser"
         clone.mkdir()
         sentinel = clone / "sentinel"
         sentinel.write_text("original", encoding="utf-8")
         keys = iter(("down", "enter"))
+        process_states = iter((True, True, False))
+        status_output = io.StringIO()
 
-        with self.assertRaisesRegex(ProfileSetupError, "Chrome"):
-            prepare_chrome_profile(
+        def process_checker() -> bool:
+            running = next(process_states)
+            if running:
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "original")
+            return running
+
+        with (
+            patch("time.sleep") as sleep,
+            redirect_stderr(status_output),
+        ):
+            copied_clone = prepare_chrome_profile(
                 self.repo_root,
                 force_reselect=True,
                 user_data_dir=self.user_data_dir,
                 input_stream=InteractiveStream(),
                 output_stream=InteractiveStream(),
                 key_reader=lambda: next(keys),
-                process_checker=lambda: True,
+                process_checker=process_checker,
             )
 
-        self.assertEqual(sentinel.read_text(encoding="utf-8"), "original")
-        self.assertFalse(list(self.repo_root.glob(".scdp-browser.backup-*")))
+        self.assertEqual(copied_clone, clone)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertIn("aguardando", status_output.getvalue().casefold())
+        self.assertIn("continuando", status_output.getvalue().casefold())
+        backups = list(self.repo_root.glob(".scdp-browser.backup-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual((backups[0] / "sentinel").read_text(), "original")
 
     def test_config_write_failure_restores_previous_clone_and_config(self) -> None:
         clone = self.repo_root / ".scdp-browser"

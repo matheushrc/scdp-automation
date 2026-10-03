@@ -1,11 +1,14 @@
 import unittest
 from dataclasses import FrozenInstanceError
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from scdp_automation.relatorio import Viagem
 from scdp_automation.xlsx_output import (
     DEBIT_CATEGORIES,
     DebitCategory,
     TripSummary,
+    create_workbook_template,
     summarize_trips,
 )
 
@@ -205,6 +208,135 @@ class DebitCategoryTests(unittest.TestCase):
         ppghd = category_by_code["PPGDH"]
         self.assertTrue(ppghd.review_required)
         self.assertEqual(ppghd.name, "PPGDH")
+
+
+class WorkbookTemplateTests(unittest.TestCase):
+    def create_template(self, directory: Path):
+        path = directory / "gastos.xlsx"
+        create_workbook_template(path)
+        from openpyxl import load_workbook
+
+        return load_workbook(path, data_only=False)
+
+    def test_create_template_has_expected_sheets_and_columns(self) -> None:
+        expected_base_headers = [
+            "PCDP",
+            "Proposto",
+            "Situação",
+            "Quantidade de diárias",
+            "Diárias (R$)",
+            "Passagens (R$)",
+            "Adicional (R$)",
+            "Descontos (R$)",
+            "Restituição (R$)",
+            "Reembolso (R$)",
+            "Total da viagem (R$)",
+            "Segmento",
+            "Código de débito",
+        ]
+
+        with TemporaryDirectory() as directory:
+            workbook = self.create_template(Path(directory))
+
+        self.assertEqual(
+            workbook.sheetnames, ["BASE VIAGENS", "APOIO", "RESUMO GASTOS"]
+        )
+        self.assertEqual(
+            [cell.value for cell in workbook["BASE VIAGENS"][1]], expected_base_headers
+        )
+        self.assertEqual(
+            [cell.value for cell in workbook["APOIO"][1]],
+            [
+                "Código de débito",
+                "Nome por extenso",
+                "Segmento",
+                "Alocação inicial (R$)",
+            ],
+        )
+        self.assertEqual(workbook["BASE VIAGENS"].cell(1, 13).value, "Código de débito")
+        self.assertTrue(workbook.calculation.fullCalcOnLoad)
+        self.assertTrue(workbook.calculation.forceFullCalc)
+        self.assertEqual(workbook.calculation.calcMode, "auto")
+
+    def test_template_seeds_active_and_future_debit_categories(self) -> None:
+        with TemporaryDirectory() as directory:
+            workbook = self.create_template(Path(directory))
+
+        support = workbook["APOIO"]
+        records = [
+            (
+                support.cell(row, 1).value,
+                support.cell(row, 2).value,
+                support.cell(row, 3).value,
+            )
+            for row in range(2, support.max_row + 1)
+        ]
+        expected = [(item.code, item.name, item.segment) for item in DEBIT_CATEGORIES]
+        self.assertEqual(records, expected)
+        self.assertTrue(
+            all(
+                support.cell(row, 4).value is None
+                for row in range(2, support.max_row + 1)
+            )
+        )
+
+        ppghd_row = next(
+            row
+            for row in range(2, support.max_row + 1)
+            if support.cell(row, 1).value == "PPGDH"
+        )
+        self.assertEqual(support.cell(ppghd_row, 2).value, "PPGDH")
+        self.assertIsNotNone(support.cell(ppghd_row, 2).comment)
+        self.assertIn("conflit", support.cell(ppghd_row, 2).comment.text.lower())
+
+    def test_base_code_column_has_dropdown_validation(self) -> None:
+        with TemporaryDirectory() as directory:
+            workbook = self.create_template(Path(directory))
+
+        base = workbook["BASE VIAGENS"]
+        validations = [
+            validation
+            for validation in base.data_validations.dataValidation
+            if validation.type == "list"
+        ]
+        self.assertEqual(len(validations), 1)
+        self.assertEqual(validations[0].formula1, "=CodigosDebito")
+        self.assertEqual(str(validations[0].sqref), "M2:M1048576")
+
+        named_range = workbook.defined_names["CodigosDebito"]
+        self.assertEqual(
+            named_range.attr_text,
+            f"'APOIO'!$A$2:$A${len(DEBIT_CATEGORIES) + 1}",
+        )
+
+    def test_summary_contains_excel_formulas_for_both_grouping_keys(self) -> None:
+        with TemporaryDirectory() as directory:
+            workbook = self.create_template(Path(directory))
+
+        summary = workbook["RESUMO GASTOS"]
+        headers = [cell.value for cell in summary[1]]
+        self.assertIn("Quantidade PCDPs", headers)
+        self.assertIn("TOTAL DIÁRIAS (R$)", headers)
+        self.assertIn("PASS AÉREA+ROD (R$)", headers)
+        self.assertIn("CANCELADAS (R$)", headers)
+
+        self.assertTrue(summary["O2"].value.startswith("=SUMIFS("))
+        self.assertIn("'BASE VIAGENS'!$L:$L,$A2", summary["O2"].value)
+        self.assertIn("'BASE VIAGENS'!$M:$M,$B2", summary["O2"].value)
+        self.assertEqual(summary["J2"].value, "=G2+H2-I2")
+        self.assertEqual(summary["M2"].value, "=K2+L2")
+        self.assertEqual(summary["Q2"].value, "=O2")
+        self.assertIn("'BASE VIAGENS'!$C:$C,\"*Cancel*\"", summary["P2"].value)
+        self.assertEqual(
+            summary["D2"].value, "=IF('APOIO'!$D$2=\"\",\"Pendente\",'APOIO'!$D$2)"
+        )
+        self.assertIn('IF(D2="Pendente","Pendente",', summary["R2"].value)
+
+        pending_row = summary.max_row
+        self.assertEqual(summary.cell(pending_row, 1).value, "SEM CLASSIFICAÇÃO")
+        self.assertTrue(summary.cell(pending_row, 5).value.startswith("=COUNTIFS("))
+        self.assertTrue(summary.cell(pending_row, 15).value.startswith("=SUMIFS("))
+        self.assertEqual(summary.cell(pending_row, 4).value, "Pendente")
 
 
 if __name__ == "__main__":

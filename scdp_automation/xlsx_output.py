@@ -106,7 +106,7 @@ def summarize_trips(trips: Sequence[Viagem]) -> list[TripSummary]:
     for trip in trips:
         pcdp = trip.numero_da_solicitacao
         if pcdp in seen_pcdps:
-            raise ValueError(f"PCDP duplicada na listagem: {pcdp}")
+            raise ValueError("PCDP duplicada na listagem.")
         seen_pcdps.add(pcdp)
 
         summaries.append(
@@ -260,6 +260,29 @@ def _countifs_formula(row: int) -> str:
     return (
         f"=COUNTIFS('BASE VIAGENS'!$L:$L,$A{row},"
         f"'BASE VIAGENS'!$M:$M,$B{row},'BASE VIAGENS'!$A:$A,\"<>\")"
+    )
+
+
+def _category_summary_formulas(row: int, support_row: int) -> tuple[str, ...]:
+    return (
+        f"='APOIO'!$C${support_row}",
+        f"='APOIO'!$A${support_row}",
+        f"='APOIO'!$B${support_row}",
+        f"=IF('APOIO'!$D${support_row}=\"\",\"Pendente\",'APOIO'!$D${support_row})",
+        _countifs_formula(row),
+        _sumifs_formula("D", row),
+        _sumifs_formula("E", row),
+        _sumifs_formula("G", row),
+        _sumifs_formula("H", row),
+        f"=G{row}+H{row}-I{row}",
+        _sumifs_formula("F", row),
+        _sumifs_formula("I", row),
+        f"=K{row}+L{row}",
+        _sumifs_formula("J", row),
+        _sumifs_formula("K", row),
+        _sumifs_formula("K", row, canceled_only=True),
+        f"=O{row}",
+        f'=IF(D{row}="Pendente","Pendente",D{row}-Q{row})',
     )
 
 
@@ -498,43 +521,48 @@ def _check_workbook_structure(workbook: Workbook) -> None:
     if summary.tables[SUMMARY_TABLE_NAME].ref != f"A1:R{summary.max_row}":
         raise WorkbookValidationError("A tabela RESUMO GASTOS está malformada.")
 
-    for row in range(2, len(DEBIT_CATEGORIES) + 2):
-        for column in range(1, len(SUMMARY_HEADERS) + 1):
-            value = summary.cell(row, column).value
-            if not isinstance(value, str) or not value.startswith("="):
-                raise WorkbookValidationError(
-                    "Há uma fórmula ausente ou um valor estático na worksheet RESUMO GASTOS."
-                )
-        if not summary.cell(row, 15).value.startswith("=SUMIFS("):
-            raise WorkbookValidationError("O total da viagem do resumo não usa SUMIFS.")
-        if summary.cell(row, 17).value != f"=O{row}":
-            raise WorkbookValidationError(
-                "O total utilizado do resumo não possui fórmula."
-            )
-        if summary.cell(row, 10).value != f"=G{row}+H{row}-I{row}":
-            raise WorkbookValidationError(
-                "O total de diárias do resumo está incorreto."
-            )
-        if summary.cell(row, 13).value != f"=K{row}+L{row}":
-            raise WorkbookValidationError(
-                "O total de passagens e restituições está incorreto."
-            )
-        if "*Cancel*" not in summary.cell(row, 16).value:
-            raise WorkbookValidationError(
-                "O resumo não calcula as solicitações canceladas."
-            )
-    pending_row = len(DEBIT_CATEGORIES) + 2
-    if summary.cell(pending_row, 1).value != "SEM CLASSIFICAÇÃO":
-        raise WorkbookValidationError(
-            "A linha de PCDPs sem classificação foi removida."
+    summary_row = 2
+    for support_row in range(2, support.max_row + 1):
+        if not support.cell(support_row, 1).value:
+            continue
+        actual_formulas = tuple(
+            summary.cell(summary_row, column).value
+            for column in range(1, len(SUMMARY_HEADERS) + 1)
         )
-    if not summary.cell(pending_row, 5).value.startswith("=COUNTIFS("):
-        raise WorkbookValidationError("A contagem de PCDPs sem código está ausente.")
-    if not summary.cell(pending_row, 15).value.startswith("=SUMIFS("):
-        raise WorkbookValidationError("O total de PCDPs sem código está ausente.")
-    if summary.cell(pending_row, 17).value != f"=O{pending_row}":
+        if actual_formulas != _category_summary_formulas(summary_row, support_row):
+            raise WorkbookValidationError(
+                "Uma fórmula da worksheet RESUMO GASTOS está ausente ou foi alterada."
+            )
+        summary_row += 1
+
+    pending_row = len(DEBIT_CATEGORIES) + 2
+    expected_pending_formulas = (
+        "SEM CLASSIFICAÇÃO",
+        None,
+        "PCDPs sem código de débito",
+        "Pendente",
+        "=COUNTIFS('BASE VIAGENS'!$M:$M,\"\",'BASE VIAGENS'!$A:$A,\"<>\")",
+        _unclassified_sumifs_formula("D"),
+        _unclassified_sumifs_formula("E"),
+        _unclassified_sumifs_formula("G"),
+        _unclassified_sumifs_formula("H"),
+        f"=G{pending_row}+H{pending_row}-I{pending_row}",
+        _unclassified_sumifs_formula("F"),
+        _unclassified_sumifs_formula("I"),
+        f"=K{pending_row}+L{pending_row}",
+        _unclassified_sumifs_formula("J"),
+        _unclassified_sumifs_formula("K"),
+        _unclassified_sumifs_formula("K", canceled_only=True),
+        f"=O{pending_row}",
+        "Pendente",
+    )
+    actual_pending_formulas = tuple(
+        summary.cell(pending_row, column).value
+        for column in range(1, len(SUMMARY_HEADERS) + 1)
+    )
+    if actual_pending_formulas != expected_pending_formulas:
         raise WorkbookValidationError(
-            "O total utilizado das PCDPs sem código está incorreto."
+            "A linha de PCDPs sem classificação contém fórmula ausente ou alterada."
         )
     if (
         workbook.calculation.calcMode != "auto"
@@ -712,11 +740,9 @@ def _validate_candidate(candidate_path: Path, trips: Sequence[Viagem]) -> None:
                     "O candidato contém código de débito desconhecido."
                 )
             segment_formula = base.cell(row, 12).value
-            if not isinstance(segment_formula, str) or not segment_formula.startswith(
-                "=IF("
-            ):
+            if segment_formula != _segment_formula(row, support.max_row):
                 raise WorkbookValidationError(
-                    "A fórmula Segmento está ausente na base."
+                    "A fórmula Segmento está ausente ou foi alterada na base."
                 )
 
         if actual_pcdps != [summary.pcdp for summary in summaries]:

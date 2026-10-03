@@ -100,8 +100,9 @@ class TripSummaryTests(unittest.TestCase):
         )
 
     def test_summarize_trips_rejects_duplicate_full_pcdp(self) -> None:
-        with self.assertRaisesRegex(ValueError, "123456/26-2B"):
+        with self.assertRaisesRegex(ValueError, "PCDP duplicada na listagem") as error:
             summarize_trips([make_trip(), make_trip()])
+        self.assertNotIn("123456/26-2B", str(error.exception))
 
         summaries = summarize_trips([make_trip("123456/26"), make_trip("123456/26-2B")])
 
@@ -345,6 +346,104 @@ class WorkbookTemplateTests(unittest.TestCase):
         self.assertTrue(summary.cell(pending_row, 5).value.startswith("=COUNTIFS("))
         self.assertTrue(summary.cell(pending_row, 15).value.startswith("=SUMIFS("))
         self.assertEqual(summary.cell(pending_row, 4).value, "Pendente")
+
+    def test_summary_metrics_reconcile_daily_ticket_refund_and_cancelled_totals(
+        self,
+    ) -> None:
+        active_data = make_trip("111111/26").model_dump()
+        canceled_data = make_trip("222222/26").model_dump()
+        canceled_data["situacao_da_viagem"] = "Cancelada"
+        zero_data = make_trip("333333/26").model_dump()
+        zero_data["sub_total"] = {
+            "quantidade_diarias": 0,
+            "diarias_r": 0,
+            "passagens_e_taxas_iniciais_r": 0,
+            "total_r": 0,
+        }
+        zero_data.update(
+            {
+                "total_adicional_r": 0,
+                "descontos_r": 0,
+                "restituicao_r": 0,
+                "reembolso_r": 0,
+                "total_da_viagem_r": 0,
+            }
+        )
+        trips = [
+            Viagem.model_validate(active_data),
+            Viagem.model_validate(canceled_data),
+            Viagem.model_validate(zero_data),
+        ]
+        summaries = summarize_trips(trips)
+
+        daily_total = sum(
+            item.daily_amount + item.additional_amount - item.discount_amount
+            for item in summaries
+        )
+        airfare_and_rail = sum(
+            item.ticket_amount + item.restitution_amount for item in summaries
+        )
+        used_once = sum(item.trip_total for item in summaries)
+        canceled_breakdown = sum(
+            item.trip_total
+            for trip, item in zip(trips, summaries, strict=True)
+            if "cancel" in trip.situacao_da_viagem.casefold()
+        )
+        restitution_breakdown = sum(item.restitution_amount for item in summaries)
+
+        self.assertAlmostEqual(daily_total, 2527.20)
+        self.assertAlmostEqual(airfare_and_rail, 1588.06)
+        self.assertAlmostEqual(used_once, 4127.32)
+        self.assertAlmostEqual(used_once, daily_total + airfare_and_rail + 12.06)
+        self.assertAlmostEqual(canceled_breakdown, 2063.66)
+        self.assertAlmostEqual(restitution_breakdown, 10.04)
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "reconciliation.xlsx"
+            write_existing_workbook(
+                path,
+                trips,
+                {
+                    trips[0].numero_da_solicitacao: "AGRONOMIA",
+                    trips[1].numero_da_solicitacao: "AFAST PAÍS",
+                    trips[2].numero_da_solicitacao: "AFAST PAÍS",
+                },
+            )
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(path, data_only=False)
+
+        summary = workbook["RESUMO GASTOS"]
+        base = workbook["BASE VIAGENS"]
+        self.assertEqual(
+            [base.cell(row, 13).value for row in range(2, 5)],
+            ["AGRONOMIA", "AFAST PAÍS", "AFAST PAÍS"],
+        )
+        rows_by_code = {
+            item.code: index + 2 for index, item in enumerate(DEBIT_CATEGORIES)
+        }
+        active_row = rows_by_code["AGRONOMIA"]
+        future_row = rows_by_code["AFAST PAÍS"]
+        self.assertEqual(
+            summary.cell(active_row, 10).value,
+            f"=G{active_row}+H{active_row}-I{active_row}",
+        )
+        self.assertEqual(
+            summary.cell(active_row, 13).value,
+            f"=K{active_row}+L{active_row}",
+        )
+        self.assertIn(
+            "'BASE VIAGENS'!$C:$C,\"*Cancel*\"",
+            summary.cell(future_row, 16).value,
+        )
+        used_formula = summary.cell(active_row, 15).value
+        self.assertTrue(used_formula.startswith("=SUMIFS("))
+        self.assertIn("'BASE VIAGENS'!$K:$K", used_formula)
+        self.assertIn(f"'BASE VIAGENS'!$L:$L,$A{active_row}", used_formula)
+        self.assertIn(f"'BASE VIAGENS'!$M:$M,$B{active_row}", used_formula)
+        self.assertEqual(summary.cell(active_row, 17).value, f"=O{active_row}")
+        self.assertNotIn("+P", summary.cell(active_row, 17).value)
+        self.assertNotIn("+L", summary.cell(active_row, 17).value)
 
 
 def write_existing_workbook(
@@ -617,6 +716,28 @@ class WorkbookRefreshTests(unittest.TestCase):
             create_workbook_template(current)
             workbook = load_workbook(current, data_only=False)
             workbook["RESUMO GASTOS"]["O2"] = 0
+            workbook.save(current)
+            workbook.close()
+            original_bytes = current.read_bytes()
+
+            with self.assertRaisesRegex(WorkbookValidationError, "fórmula"):
+                build_candidate([trip], current, candidate)
+
+            self.assertEqual(current.read_bytes(), original_bytes)
+            self.assertFalse(candidate.exists())
+
+    def test_refresh_rejects_changed_summary_formula_without_changing_source(
+        self,
+    ) -> None:
+        from openpyxl import load_workbook
+
+        trip = make_trip()
+        with TemporaryDirectory() as directory:
+            current = Path(directory) / "current.xlsx"
+            candidate = Path(directory) / "candidate.xlsx"
+            create_workbook_template(current)
+            workbook = load_workbook(current, data_only=False)
+            workbook["RESUMO GASTOS"]["G2"] = "=0"
             workbook.save(current)
             workbook.close()
             original_bytes = current.read_bytes()

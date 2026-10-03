@@ -1,16 +1,67 @@
 import asyncio
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+from scdp_automation import xlsx_output
 from scdp_automation.extrator import (
     DEFAULT_OUTPUT,
     collect_pending_descriptions,
     extract_description,
     parse_args,
     resolve_report_url,
+    run,
+    save_checkpoint_and_publish,
 )
-from scdp_automation.relatorio import Viagem
+from scdp_automation.relatorio import Viagem, load_trips, save_json
+
+
+def make_valid_trip(
+    pcdp: str = "999999/26",
+    name: str = "Pessoa de Teste",
+    description: str | None = None,
+) -> Viagem:
+    return Viagem.model_validate(
+        {
+            "numero_da_solicitacao": pcdp,
+            "nome_do_proposto": name,
+            "orgao_solicitante": "ORG-TESTE",
+            "orgao_superior": "ORG-SUPERIOR-TESTE",
+            "tipo_da_viagem": "NACIONAL",
+            "situacao_da_viagem": "Autorizada",
+            "motivo_viagem": "Nacional - A Serviço",
+            "trechos": [
+                {
+                    "inicio": "01/03/2026",
+                    "termino": "02/03/2026",
+                    "origem": "Cidade Alfa (AA)",
+                    "destino": "Cidade Beta (BB)",
+                    "meio_de_transporte": "Aéreo",
+                    "quantidade_diarias": 1.0,
+                    "diarias_r": 100.0,
+                    "passagens_e_taxas_iniciais_r": 20.0,
+                    "total_r": 120.0,
+                }
+            ],
+            "custo_com_bilhetes_remarcados_nao_utilizados_cancelados_r": {
+                "passagens_e_taxas_iniciais_r": 0.0,
+                "total_r": 0.0,
+            },
+            "sub_total": {
+                "quantidade_diarias": 1.0,
+                "diarias_r": 100.0,
+                "passagens_e_taxas_iniciais_r": 20.0,
+                "total_r": 120.0,
+            },
+            "total_adicional_r": 0.0,
+            "descontos_r": 0.0,
+            "restituicao_r": 0.0,
+            "reembolso_r": 0.0,
+            "total_da_viagem_r": 120.0,
+            "descricao_do_motivo_da_viagem": description,
+        }
+    )
 
 
 class ExtratorTests(unittest.TestCase):
@@ -217,6 +268,144 @@ class QueryRetryTests(unittest.IsolatedAsyncioTestCase):
             self.assertRaises(TimeoutError),
         ):
             await consult_trip_reason(MagicMock(spec=Page), "000548/26")
+
+
+class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    def test_checkpoint_is_saved_before_workbook_publication(self) -> None:
+        trips = [make_valid_trip("000001/26")]
+        checkpoint = Path("output/checkpoint.json")
+        workbook = Path("output/test-workbook.xlsx")
+        calls: list[str] = []
+
+        with (
+            patch(
+                "scdp_automation.extrator.save_json",
+                side_effect=lambda *_: calls.append("checkpoint"),
+            ) as save,
+            patch(
+                "scdp_automation.extrator.publish_workbook",
+                side_effect=lambda *_: calls.append("workbook"),
+            ) as publish,
+        ):
+            result = save_checkpoint_and_publish(trips, checkpoint, workbook)
+
+        self.assertEqual(calls, ["checkpoint", "workbook"])
+        save.assert_called_once_with(checkpoint, trips)
+        publish.assert_called_once_with(trips, workbook)
+        self.assertIsNone(result)
+
+    def test_workbook_failure_keeps_complete_checkpoint(self) -> None:
+        trips = [make_valid_trip("000001/26"), make_valid_trip("000002/26")]
+
+        with TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "viagens.json"
+            workbook = Path(directory) / "gastos.xlsx"
+            with (
+                patch("scdp_automation.extrator.save_json", wraps=save_json) as save,
+                patch(
+                    "scdp_automation.extrator.publish_workbook",
+                    side_effect=OSError("workbook unavailable"),
+                ) as publish,
+                self.assertRaisesRegex(OSError, "workbook unavailable"),
+            ):
+                save_checkpoint_and_publish(trips, checkpoint, workbook)
+
+            save.assert_called_once_with(checkpoint, trips)
+            publish.assert_called_once_with(trips, workbook)
+            self.assertEqual(
+                [trip.numero_da_solicitacao for trip in load_trips(checkpoint)],
+                ["000001/26", "000002/26"],
+            )
+
+    async def run_with_mocks(
+        self,
+        trips: list[Viagem],
+        args: list[str],
+        backup_path: Path | None,
+    ) -> tuple[MagicMock, Mock, AsyncMock, Mock]:
+        page = MagicMock()
+        page.url = "https://www2.scdp.gov.br/novoscdp/home.xhtml"
+        page.bring_to_front = AsyncMock()
+        context = MagicMock()
+        context.pages = [page]
+        browser = MagicMock()
+        browser.contexts = [context]
+        browser.close = AsyncMock()
+        playwright_manager = MagicMock()
+        playwright_manager.__aenter__ = AsyncMock(return_value=object())
+        playwright_manager.__aexit__ = AsyncMock(return_value=False)
+        workbook_publisher = Mock(return_value=backup_path)
+        pending_descriptions = AsyncMock()
+        logger_info = Mock()
+
+        with (
+            patch("scdp_automation.extrator.configure_logging"),
+            patch("scdp_automation.extrator.load_trips", return_value=[]),
+            patch(
+                "scdp_automation.extrator.async_playwright",
+                return_value=playwright_manager,
+            ),
+            patch(
+                "scdp_automation.extrator.selected_profile_directory",
+                return_value="Default",
+            ),
+            patch("scdp_automation.extrator.Path.is_dir", return_value=True),
+            patch("scdp_automation.extrator.Path.is_file", return_value=True),
+            patch(
+                "scdp_automation.extrator.connect_visible_chrome",
+                new=AsyncMock(return_value=browser),
+            ),
+            patch("scdp_automation.extrator.start_login_if_needed", new=AsyncMock()),
+            patch("scdp_automation.extrator.wait_for_login", new=AsyncMock()),
+            patch("scdp_automation.extrator.open_annual_cch_report", new=AsyncMock()),
+            patch(
+                "scdp_automation.extrator.collect_listing",
+                new=AsyncMock(return_value=trips),
+            ),
+            patch("scdp_automation.extrator.save_json"),
+            patch("scdp_automation.extrator.publish_workbook", new=workbook_publisher),
+            patch(
+                "scdp_automation.extrator.collect_pending_descriptions",
+                new=pending_descriptions,
+            ),
+            patch("scdp_automation.extrator.logger.info", new=logger_info),
+        ):
+            await run(args)
+
+        return page, workbook_publisher, pending_descriptions, logger_info
+
+    async def test_limit_does_not_skip_workbook_publication(self) -> None:
+        trips = [
+            make_valid_trip("000001/26"),
+            make_valid_trip("000002/26"),
+            make_valid_trip("000003/26"),
+        ]
+        backup = Path("output/gastos.backup.xlsx")
+
+        page, workbook_publisher, pending, _ = await self.run_with_mocks(
+            trips, ["--limite", "1"], backup
+        )
+
+        workbook_publisher.assert_called_once_with(trips, xlsx_output.DEFAULT_WORKBOOK)
+        pending.assert_awaited_once_with(page, trips, [trips[0]], DEFAULT_OUTPUT)
+
+    async def test_classification_reminder_has_no_trip_data(self) -> None:
+        secrets = ("000999/26", "NOME_PRIVADO_TESTE", "DESCRICAO_PRIVADA_TESTE")
+        trip = make_valid_trip(secrets[0], secrets[1], secrets[2])
+        backup = Path("output/gastos.backup.xlsx")
+
+        _, workbook_publisher, _, logger_info = await self.run_with_mocks(
+            [trip], [], backup
+        )
+
+        workbook_publisher.assert_called_once_with([trip], xlsx_output.DEFAULT_WORKBOOK)
+        log_calls = repr(logger_info.call_args_list)
+        for secret in secrets:
+            self.assertNotIn(secret, log_calls)
+        self.assertIn("BASE VIAGENS", log_calls)
+        self.assertIn("APOIO", log_calls)
+        self.assertIn(str(xlsx_output.DEFAULT_WORKBOOK.resolve()), log_calls)
+        self.assertIn(str(backup.resolve()), log_calls)
 
 
 class BrowserModuleTests(unittest.TestCase):

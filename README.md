@@ -80,6 +80,23 @@ Primeiro o script percorre todas as páginas do relatório e grava os dados. Dep
 uv run python -m scdp_automation --limite 2
 ```
 
+O limite afeta somente a consulta opcional das descrições. A listagem anual
+completa é sempre salva no JSON e publicada em `output/gastos_scdp_2026.xlsx`.
+Esse workbook tem três worksheets:
+
+- `BASE VIAGENS` contém uma linha por PCDP. A coluna final `Código de débito` é
+  preenchida manualmente; `Segmento` é obtido pelo código escolhido.
+- `APOIO` contém o código, nome e segmento de cada curso, programa ou setor.
+  A chefia preenche `Alocação inicial (R$)` no início do período e mantém em
+  branco as categorias ainda sem valor confirmado.
+- `RESUMO GASTOS` agrupa os valores por segmento e código com fórmulas do Excel.
+  O Excel recalcula os resultados quando o workbook é aberto.
+
+Na primeira publicação, o arquivo é criado sem backup. Atualizações seguintes
+criam um backup com data e hora antes de substituir o workbook. Os códigos
+manuais continuam vinculados à PCDP completa e as alocações de `APOIO` são
+preservadas entre as atualizações.
+
 ## Logs
 
 O Loguru grava mensagens operacionais no terminal e em `logs/scdp/`. Os arquivos giram diariamente e são mantidos por 30 dias. Os logs não registram conteúdo de formulários, credenciais, cookies, corpos de requisição/resposta ou identificadores de viagem.

@@ -18,6 +18,7 @@ from scdp_automation.chrome_profile_setup import selected_profile_directory
 from scdp_automation.logging_config import configure_logging
 from scdp_automation.navegador_chrome import connect_visible_chrome
 from scdp_automation.relatorio import Viagem, load_trips, parse_report_rows, save_json
+from scdp_automation.xlsx_output import DEFAULT_WORKBOOK, publish_workbook
 
 SCDP_URL = "https://www2.scdp.gov.br/"
 DEFAULT_OUTPUT = Path("output/viagens_scdp_2026.json")
@@ -351,6 +352,16 @@ async def collect_pending_descriptions(
             logger.info("Descrição {} de {} gravada.", index, len(pending))
 
 
+def save_checkpoint_and_publish(
+    trips: list[Viagem],
+    checkpoint_path: Path,
+    workbook_path: Path = DEFAULT_WORKBOOK,
+) -> Path | None:
+    """Persist the complete JSON checkpoint before refreshing the workbook."""
+    save_json(checkpoint_path, trips)
+    return publish_workbook(trips, workbook_path)
+
+
 async def run(argv: list[str] | None = None) -> None:
     configure_logging()
     args = parse_args(argv)
@@ -403,7 +414,16 @@ async def run(argv: list[str] | None = None) -> None:
             old = previous.get(trip.numero_da_solicitacao)
             if old is not None:
                 trip.descricao_do_motivo_da_viagem = old.descricao_do_motivo_da_viagem
-        save_json(output, trips)
+        backup = save_checkpoint_and_publish(trips, output)
+        logger.info("Workbook de gastos atualizado em {}.", DEFAULT_WORKBOOK.resolve())
+        if backup is None:
+            logger.info("Nenhum backup anterior existia para o workbook.")
+        else:
+            logger.info("Backup anterior do workbook em {}.", backup.resolve())
+        logger.info(
+            "Classifique PCDPs sem código na última coluna de BASE VIAGENS e "
+            "preencha as alocações anuais em APOIO."
+        )
         pending = [v for v in trips if v.descricao_do_motivo_da_viagem is None]
         if args.limite:
             pending = pending[: args.limite]

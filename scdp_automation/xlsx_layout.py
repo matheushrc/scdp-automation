@@ -275,10 +275,7 @@ def summary_formulas(workbook: Workbook) -> dict[str, str]:
         cells = f"{col}22,{col}36,{col}41,{col}43"
         formulas[f"{col}45"] = f'=IF(COUNT({cells})=4,SUM({cells}),"Pendente")'
     for row, code in enumerate(DETAIL_CODES, 50):
-        # This detail is explicitly daily expenses, as in the original heading.
-        category_rows = [by_code[code]]
-        terms = [_sum_for_codes(category_rows, col)[1:] for col in ("E", "G", "H")]
-        formulas[f"C{row}"] = f"={terms[0]}+{terms[1]}-{terms[2]}"
+        formulas[f"C{row}"] = _sum_for_codes([by_code[code]])
     formulas["C58"] = "=SUM(C50:C57)"
     formulas["C65"] = "=COUNTIFS('BASE VIAGENS'!$M:$M,\"\",'BASE VIAGENS'!$A:$A,\"<>\")"
     formulas["F66"] = (

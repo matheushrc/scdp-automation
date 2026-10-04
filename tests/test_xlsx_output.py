@@ -20,6 +20,20 @@ from scdp_automation.xlsx_output import (
     summarize_trips,
 )
 
+_reference_patch = patch.object(
+    xlsx_output,
+    "DEFAULT_REFERENCE",
+    Path(__file__).parent / "unavailable-reference.xlsx",
+)
+
+
+def setUpModule() -> None:
+    _reference_patch.start()
+
+
+def tearDownModule() -> None:
+    _reference_patch.stop()
+
 
 def make_trip(pcdp: str = "123456/26-2B") -> Viagem:
     """Create a validated trip whose itinerary differs from its totals."""

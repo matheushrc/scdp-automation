@@ -85,12 +85,34 @@ completa é sempre salva no JSON e publicada em `output/gastos_scdp_2026.xlsx`.
 Esse workbook tem três worksheets:
 
 - `BASE VIAGENS` contém uma linha por PCDP. A coluna final `Código de débito` é
-  preenchida manualmente; `Segmento` é obtido pelo código escolhido.
+  recuperada da original na importação inicial e preservada pela PCDP completa.
+  Viagens novas sem classificação conhecida são preenchidas manualmente;
+  `Segmento` é obtido pelo código escolhido.
 - `APOIO` contém o código, nome e segmento de cada curso, programa ou setor.
-  A chefia preenche `Alocação inicial (R$)` no início do período e mantém em
-  branco as categorias ainda sem valor confirmado.
-- `RESUMO GASTOS` agrupa os valores por segmento e código com fórmulas do Excel.
-  O Excel recalcula os resultados quando o workbook é aberto.
+  Os campos de entrada são diárias e passagens distribuído, recurso total,
+  transportes agendado e transportes pago. A distribuição de transportes é
+  calculada como recurso total menos a distribuição de diárias e passagens.
+  Valores existentes são importados da original; campos realmente ausentes
+  ficam pendentes. Não repita o orçamento do grupo nas subcategorias.
+  `PPGEL +` mantém o rateio da original entre PPGE, PPGEL e PPGH nas três
+  colunas de percentual; os percentuais devem somar 100%.
+- `RESUMO GASTOS` preserva o quadro visual da original: graduação,
+  pós-graduação, administrativo, transportes e saldos. Os gastos são agrupados
+  por segmento e código, com suplementos e detalhamentos no grupo correto.
+  `Utilizado` de transportes corresponde ao agendado, como na fórmula original;
+  o valor pago permanece disponível em APOIO. O Excel recalcula as fórmulas
+  quando o workbook é aberto. Categorias adicionais e pendências ficam abaixo
+  do quadro original e entram no total consolidado.
+
+O gerador existente publica em `output/gastos_scdp_2026.xlsx`, substituindo a
+planilha anterior com backup. A criação e atualização usam o formato original
+no mesmo fluxo de extração. A referência é somente lida; não é alterada.
+
+Duplicidades equivalentes são consolidadas por PCDP; classificações e valores
+conflitantes impedem a importação. Um workbook anterior no formato genérico é
+migrado na atualização quando a referência está disponível, preservando códigos
+e alocações manuais. A reconstrução usa o conjunto da original; a extração
+posterior pode conter viagens diferentes e exigir reconciliação.
 
 Na primeira publicação, o arquivo é criado sem backup. Atualizações seguintes
 criam um backup com data e hora antes de substituir o workbook. Os códigos

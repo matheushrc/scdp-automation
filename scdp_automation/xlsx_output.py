@@ -7,7 +7,6 @@ import os
 import shutil
 from collections.abc import Sequence
 from copy import copy
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -24,113 +23,27 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.worksheet import Worksheet
 
 from scdp_automation.relatorio import Viagem
-
-
-@dataclass(frozen=True, slots=True)
-class DebitCategory:
-    """A stable debit key with its display name and budget segment."""
-
-    code: str
-    name: str
-    segment: str
-    review_required: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class TripSummary:
-    """One row of aggregated values from a complete SCDP request."""
-
-    pcdp: str
-    proposed: str
-    status: str
-    daily_count: float
-    daily_amount: float
-    ticket_amount: float
-    additional_amount: float
-    discount_amount: float
-    restitution_amount: float
-    reimbursement_amount: float
-    trip_total: float
-
-
-DEBIT_CATEGORIES: tuple[DebitCategory, ...] = (
-    DebitCategory("ADMINISTRAÇÃO", "Administração", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("AGRONOMIA", "Agronomia", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("C COMPUTAÇÃO", "Ciências da Computação", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("C ECONÔMICAS", "Ciências Econômicas", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("CIÊNCIAS SOCIAIS", "Ciências Sociais", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("ENFERMAGEM", "Enfermagem", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("ENG AMBIENTAL", "Engenharia Ambiental", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("ENGENHARIA CIVIL", "Engenharia Civil", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("FILOSOFIA", "Filosofia", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("GEOGRAFIA", "Geografia", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("HISTÓRIA", "História", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("LETRAS", "Letras", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("MATEMÁTICA", "Matemática", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("MEDICINA", "Medicina", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("PEDAGOGIA", "Pedagogia", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("Lato Oncologia", "LS Enf em Oncologia", "SEG 2 MESTRADO"),
-    DebitCategory("PPGCB", "PPG Ciências Biomédicas", "SEG 2 MESTRADO"),
-    DebitCategory("PPGE", "PPG Educação", "SEG 2 MESTRADO"),
-    DebitCategory("PPGEL", "PPG Estudos Linguísticos", "SEG 2 MESTRADO"),
-    DebitCategory("PPGEL +", "PPGEL +", "SEG 2 MESTRADO"),
-    DebitCategory("PPGEnf", "PPG Enfermagem", "SEG 2 MESTRADO"),
-    DebitCategory("PPGFil", "PPG Filosofia", "SEG 2 MESTRADO"),
-    DebitCategory("PPGGeo", "PPG Geografia", "SEG 2 MESTRADO"),
-    DebitCategory("PPGH", "PPG História", "SEG 2 MESTRADO"),
-    DebitCategory("PPGDH", "PPGDH", "SEG 2 MESTRADO", review_required=True),
-    DebitCategory("PROFIAP", "PROFIAP", "SEG 2 MESTRADO"),
-    DebitCategory("PROFMAT", "PROFMAT", "SEG 2 MESTRADO"),
-    DebitCategory("DIREÇÃO", "Geral (Direção/Coordenações)", "SEG 3 OUTROS"),
-    DebitCategory("DIREÇÃO - AGAS", "DIREÇÃO - AGAS", "SEG 3 OUTROS"),
-    DebitCategory("DIREÇÃO - Banca Libras", "DIREÇÃO - Banca Libras", "SEG 3 OUTROS"),
-    DebitCategory("DIREÇÃO - CAAEX", "DIREÇÃO - CAAEX", "SEG 3 OUTROS"),
-    DebitCategory("DIREÇÃO - Empr Junior", "DIREÇÃO - Empr Junior", "SEG 3 OUTROS"),
-    DebitCategory(
-        "DIREÇÃO - StartUp Summit", "DIREÇÃO - StartUp Summit", "SEG 3 OUTROS"
-    ),
-    DebitCategory(
-        "DIREÇÃO - StartUp Weekend", "DIREÇÃO - StartUp Weekend", "SEG 3 OUTROS"
-    ),
-    DebitCategory("DIREÇÃO - Sunset", "DIREÇÃO - Sunset", "SEG 3 OUTROS"),
-    DebitCategory("CAPPG - Res 49", "CAPPG - Res 49", "SEG 4 AUX EVENTOS"),
-    DebitCategory("AFAST PAÍS", "Afastamento no país", "SEG 5 AFAST PAÍS"),
+from scdp_automation.xlsx_models import (
+    DEBIT_CATEGORIES,
+    DebitCategory,
+    TripSummary,
+    summarize_trips,
 )
 
-
-def summarize_trips(trips: Sequence[Viagem]) -> list[TripSummary]:
-    """Map one summary row per unique full PCDP, using trip-level subtotals."""
-    summaries: list[TripSummary] = []
-    seen_pcdps: set[str] = set()
-
-    for trip in trips:
-        pcdp = trip.numero_da_solicitacao
-        if pcdp in seen_pcdps:
-            raise ValueError("PCDP duplicada na listagem.")
-        seen_pcdps.add(pcdp)
-
-        summaries.append(
-            TripSummary(
-                pcdp=pcdp,
-                proposed=trip.nome_do_proposto,
-                status=trip.situacao_da_viagem,
-                daily_count=trip.sub_total.quantidade_diarias,
-                daily_amount=trip.sub_total.diarias_r,
-                ticket_amount=trip.sub_total.passagens_e_taxas_iniciais_r,
-                additional_amount=trip.total_adicional_r,
-                discount_amount=trip.descontos_r,
-                restitution_amount=trip.restituicao_r,
-                reimbursement_amount=trip.reembolso_r,
-                trip_total=trip.total_da_viagem_r,
-            )
-        )
-
-    return summaries
-
+__all__ = ["DEBIT_CATEGORIES", "DebitCategory", "TripSummary", "summarize_trips"]
 
 DEFAULT_WORKBOOK = (
     Path(__file__).resolve().parents[1] / "output" / "gastos_scdp_2026.xlsx"
 )
+
+_CHECKOUT = Path(__file__).resolve().parents[1]
+_REFERENCE_ROOT = (
+    _CHECKOUT.parent.parent if _CHECKOUT.parent.name == ".worktrees" else _CHECKOUT
+)
+DEFAULT_REFERENCE = (
+    _REFERENCE_ROOT / "input" / ".Diárias-Pass-Transp 2026 - Consulta Saldos.xlsx"
+)
+
 
 BASE_HEADERS = (
     "PCDP",
@@ -367,8 +280,13 @@ def build_summary_formulas(workbook: Workbook) -> None:
     _add_table(summary, SUMMARY_TABLE_NAME, f"A1:R{row}")
 
 
-def create_workbook_template(path: Path) -> None:
+def create_workbook_template(path: Path, reference_path: Path | None = None) -> None:
     """Create the formula-driven three-sheet annual spending workbook."""
+    source_path = reference_path or DEFAULT_REFERENCE
+    if path.resolve() == source_path.resolve():
+        raise WorkbookValidationError(
+            "O destino não pode ser a planilha de referência."
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     workbook = Workbook()
     base = workbook.active
@@ -433,7 +351,13 @@ def create_workbook_template(path: Path) -> None:
 
     _add_table(base, BASE_TABLE_NAME, "A1:M2")
     _add_table(support, SUPPORT_TABLE_NAME, f"A1:D{support.max_row}")
-    build_summary_formulas(workbook)
+    if reference_path is not None or source_path.exists():
+        from scdp_automation.xlsx_layout import install_layout
+        from scdp_automation.xlsx_reference import read_reference
+
+        install_layout(workbook, source_path, read_reference(source_path))
+    else:
+        build_summary_formulas(workbook)
 
     workbook.calculation.calcMode = "auto"
     workbook.calculation.fullCalcOnLoad = True
@@ -452,6 +376,12 @@ def _check_workbook_structure(workbook: Workbook) -> None:
     summary = workbook["RESUMO GASTOS"]
     if tuple(cell.value for cell in base[1]) != BASE_HEADERS:
         raise WorkbookValidationError("As colunas de BASE VIAGENS foram alteradas.")
+    from scdp_automation.xlsx_layout import LAYOUT_NAME, validate_layout
+
+    if LAYOUT_NAME in workbook.defined_names:
+        validate_layout(workbook)
+        _check_common_structure(workbook)
+        return
     if tuple(cell.value for cell in support[1]) != SUPPORT_HEADERS:
         raise WorkbookValidationError("As colunas de APOIO foram alteradas.")
     if tuple(cell.value for cell in summary[1]) != SUMMARY_HEADERS:
@@ -574,6 +504,50 @@ def _check_workbook_structure(workbook: Workbook) -> None:
         )
 
 
+def _check_common_structure(workbook: Workbook) -> None:
+    from scdp_automation.xlsx_layout import LAYOUT_NAME
+
+    base = workbook["BASE VIAGENS"]
+    support = workbook["APOIO"]
+    if workbook.defined_names[LAYOUT_NAME].attr_text != '"3"':
+        raise WorkbookValidationError("Versão do layout inválida.")
+    name = workbook.defined_names.get(CODE_LIST_NAME)
+    if name is None or name.attr_text != f"'APOIO'!$A$2:$A${support.max_row}":
+        raise WorkbookValidationError("Lista de códigos de débito ausente.")
+    validations = base.data_validations.dataValidation
+    if not any(
+        v.type == "list"
+        and v.formula1 == f"={CODE_LIST_NAME}"
+        and str(v.sqref) == f"M2:M{_BASE_LAST_ROW}"
+        for v in validations
+    ):
+        raise WorkbookValidationError("Validação de códigos de débito ausente.")
+    if BASE_TABLE_NAME not in base.tables or SUPPORT_TABLE_NAME not in support.tables:
+        raise WorkbookValidationError("Tabela necessária ausente.")
+    if support.tables[SUPPORT_TABLE_NAME].ref != f"A1:L{support.max_row}":
+        raise WorkbookValidationError("Tabela APOIO malformada.")
+    calculation = workbook.calculation
+    if (
+        calculation is None
+        or calculation.calcMode != "auto"
+        or not calculation.fullCalcOnLoad
+        or not calculation.forceFullCalc
+    ):
+        raise WorkbookValidationError("Recálculo completo ausente.")
+
+
+def _summaries(trips: Sequence[Viagem] | Sequence[TripSummary]) -> list[TripSummary]:
+    result = []
+    seen: set[str] = set()
+    for trip in trips:
+        summary = summarize_trips([trip])[0] if isinstance(trip, Viagem) else trip
+        if summary.pcdp in seen:
+            raise WorkbookValidationError("PCDP duplicada na listagem.")
+        seen.add(summary.pcdp)
+        result.append(summary)
+    return result
+
+
 def _load_workbook_for_refresh(path: Path) -> Workbook:
     try:
         workbook = load_workbook(path, data_only=False)
@@ -634,13 +608,20 @@ def _write_base_rows(
         for column, value in enumerate(values, start=1):
             base.cell(row, column, value)
         base.cell(row, 12, _segment_formula(row, support_last_row))
-        base.cell(row, 13, manual_codes.get(pcdp))
+        base.cell(row, 13).value = manual_codes.get(pcdp)
+        base.cell(row, 4).number_format = "0.0"
+        for column in range(5, 12):
+            base.cell(row, column).number_format = '"R$" #,##0.00;[Red]-"R$" #,##0.00'
 
     base.tables[BASE_TABLE_NAME].ref = f"A1:M{target_last_row}"
 
 
 def build_candidate(
-    trips: Sequence[Viagem], current_path: Path, candidate_path: Path
+    trips: Sequence[Viagem] | Sequence[TripSummary],
+    current_path: Path,
+    candidate_path: Path,
+    *,
+    reference_path: Path | None = None,
 ) -> None:
     """Write a candidate snapshot while leaving the published workbook untouched."""
     if current_path.resolve() == candidate_path.resolve():
@@ -652,7 +633,7 @@ def build_candidate(
             f"O caminho de candidato já existe: {candidate_path}"
         )
 
-    summaries = summarize_trips(trips)
+    summaries = _summaries(trips)
     incoming_pcdps = {summary.pcdp for summary in summaries}
     manual_codes: dict[str, str] = {}
     workbook: Workbook
@@ -697,10 +678,28 @@ def build_candidate(
             )
     else:
         candidate_path.parent.mkdir(parents=True, exist_ok=True)
-        create_workbook_template(candidate_path)
+        create_workbook_template(candidate_path, reference_path)
         workbook = _load_workbook_for_refresh(candidate_path)
 
     try:
+        from scdp_automation.xlsx_layout import LAYOUT_NAME, install_layout
+        from scdp_automation.xlsx_reference import read_reference
+
+        source_path = reference_path or DEFAULT_REFERENCE
+        if LAYOUT_NAME not in workbook.defined_names and source_path.exists():
+            old_allocations = {
+                workbook["APOIO"].cell(r, 1).value: workbook["APOIO"].cell(r, 4).value
+                for r in range(2, workbook["APOIO"].max_row + 1)
+            }
+            data = read_reference(source_path)
+            install_layout(workbook, source_path, data)
+            for row in range(2, workbook["APOIO"].max_row + 1):
+                value = old_allocations.get(workbook["APOIO"].cell(row, 1).value)
+                if value is not None:
+                    workbook["APOIO"].cell(row, 4, value)
+            manual_codes = data.codes | manual_codes
+        elif not current_path.exists() and source_path.exists():
+            manual_codes = read_reference(source_path).codes
         candidate_path.parent.mkdir(parents=True, exist_ok=True)
         _write_base_rows(workbook, summaries, manual_codes)
         workbook.save(candidate_path)
@@ -711,8 +710,10 @@ def build_candidate(
     workbook.close()
 
 
-def _validate_candidate(candidate_path: Path, trips: Sequence[Viagem]) -> None:
-    summaries = summarize_trips(trips)
+def _validate_candidate(
+    candidate_path: Path, trips: Sequence[Viagem] | Sequence[TripSummary]
+) -> None:
+    summaries = _summaries(trips)
     workbook = _load_workbook_for_refresh(candidate_path)
     try:
         _check_workbook_structure(workbook)
@@ -790,7 +791,11 @@ def _backup_path_for(workbook_path: Path) -> Path:
 
 
 def publish_workbook(
-    trips: Sequence[Viagem], workbook_path: Path = DEFAULT_WORKBOOK
+    trips: Sequence[Viagem] | Sequence[TripSummary],
+    workbook_path: Path = DEFAULT_WORKBOOK,
+    *,
+    reference_path: Path | None = None,
+    recalculate: bool = False,
 ) -> Path | None:
     """Serialize refreshes, validate a neighboring candidate, then replace atomically."""
     workbook_path.parent.mkdir(parents=True, exist_ok=True)
@@ -800,8 +805,18 @@ def publish_workbook(
             candidate = _candidate_path_for(workbook_path)
             candidate_retained = False
             try:
-                build_candidate(trips, workbook_path, candidate)
+                if reference_path is None:
+                    build_candidate(trips, workbook_path, candidate)
+                else:
+                    build_candidate(
+                        trips, workbook_path, candidate, reference_path=reference_path
+                    )
                 _validate_candidate(candidate, trips)
+                if recalculate:
+                    from scdp_automation.xlsx_recalculate import recalculate_workbook
+
+                    recalculate_workbook(candidate)
+                    _validate_candidate(candidate, trips)
                 backup: Path | None = None
                 if workbook_path.exists():
                     backup = _backup_path_for(workbook_path)
@@ -830,3 +845,19 @@ def publish_workbook(
         raise WorkbookLockedError(
             f"O workbook está em uso por outra atualização; feche-o e tente novamente: {workbook_path}"
         ) from error
+
+
+def import_reference_workbook(
+    reference: Path, output: Path, *, recalculate: bool = False
+) -> Path | None:
+    """Bootstrap the simplified workbook from the original, without extraction."""
+    from scdp_automation.xlsx_reference import read_reference
+
+    if reference.resolve() == output.resolve():
+        raise WorkbookValidationError(
+            "O destino não pode ser a planilha de referência."
+        )
+    data = read_reference(reference)
+    return publish_workbook(
+        data.trips, output, reference_path=reference, recalculate=recalculate
+    )

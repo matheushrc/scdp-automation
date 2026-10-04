@@ -556,6 +556,10 @@ def _load_workbook_for_refresh(path: Path) -> Workbook:
             f"Não foi possível abrir o workbook existente em {path}."
         ) from error
     try:
+        from scdp_automation.xlsx_layout import LAYOUT_NAME, update_display_names
+
+        if LAYOUT_NAME in workbook.defined_names:
+            update_display_names(workbook)
         _check_workbook_structure(workbook)
     except Exception:
         workbook.close()

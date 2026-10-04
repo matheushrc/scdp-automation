@@ -109,6 +109,27 @@ def _group(code: str) -> str:
     return code
 
 
+def update_display_names(workbook: Workbook) -> None:
+    """Use official course names without changing debit keys or group membership."""
+    support = workbook["APOIO"]
+    summary = workbook["RESUMO GASTOS"]
+    labels = {}
+    categories = {category.code: category for category in DEBIT_CATEGORIES}
+    for row in range(2, support.max_row + 1):
+        code = support.cell(row, 1).value
+        category = categories.get(code)
+        if category is None:
+            continue
+        support.cell(row, 2).value = category.name
+        if category.segment in ("SEG 1 GRADUAÇÃO", "SEG 2 MESTRADO"):
+            labels[support.cell(row, 9).value] = category.name
+            support.cell(row, 9).value = category.name
+    for row in (*MAIN_ROWS, *EXTRA_ROWS):
+        previous = summary.cell(row, 2).value
+        if previous in labels:
+            summary.cell(row, 2).value = labels[previous]
+
+
 def install_layout(
     workbook: Workbook, reference_path: Path, data: ReferenceData
 ) -> None:
@@ -182,6 +203,7 @@ def install_layout(
         summary[coordinate] = formula
     summary["C65"].number_format = "0"
     workbook.defined_names.add(DefinedName(LAYOUT_NAME, attr_text='"3"'))
+    update_display_names(workbook)
     workbook.active = 2
 
 

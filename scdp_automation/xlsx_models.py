@@ -38,31 +38,47 @@ class TripSummary:
 DEBIT_CATEGORIES: tuple[DebitCategory, ...] = (
     DebitCategory("ADMINISTRAÇÃO", "Administração", "SEG 1 GRADUAÇÃO"),
     DebitCategory("AGRONOMIA", "Agronomia", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("C COMPUTAÇÃO", "Ciências da Computação", "SEG 1 GRADUAÇÃO"),
+    DebitCategory("C COMPUTAÇÃO", "Ciência da Computação", "SEG 1 GRADUAÇÃO"),
     DebitCategory("C ECONÔMICAS", "Ciências Econômicas", "SEG 1 GRADUAÇÃO"),
     DebitCategory("CIÊNCIAS SOCIAIS", "Ciências Sociais", "SEG 1 GRADUAÇÃO"),
     DebitCategory("ENFERMAGEM", "Enfermagem", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("ENG AMBIENTAL", "Engenharia Ambiental", "SEG 1 GRADUAÇÃO"),
+    DebitCategory(
+        "ENG AMBIENTAL", "Engenharia Ambiental e Sanitária", "SEG 1 GRADUAÇÃO"
+    ),
     DebitCategory("ENGENHARIA CIVIL", "Engenharia Civil", "SEG 1 GRADUAÇÃO"),
     DebitCategory("FILOSOFIA", "Filosofia", "SEG 1 GRADUAÇÃO"),
     DebitCategory("GEOGRAFIA", "Geografia", "SEG 1 GRADUAÇÃO"),
     DebitCategory("HISTÓRIA", "História", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("LETRAS", "Letras", "SEG 1 GRADUAÇÃO"),
+    DebitCategory("LETRAS", "Letras – Português e Espanhol", "SEG 1 GRADUAÇÃO"),
     DebitCategory("MATEMÁTICA", "Matemática", "SEG 1 GRADUAÇÃO"),
     DebitCategory("MEDICINA", "Medicina", "SEG 1 GRADUAÇÃO"),
     DebitCategory("PEDAGOGIA", "Pedagogia", "SEG 1 GRADUAÇÃO"),
-    DebitCategory("Lato Oncologia", "LS Enf em Oncologia", "SEG 2 MESTRADO"),
-    DebitCategory("PPGCB", "PPG Ciências Biomédicas", "SEG 2 MESTRADO"),
-    DebitCategory("PPGE", "PPG Educação", "SEG 2 MESTRADO"),
-    DebitCategory("PPGEL", "PPG Estudos Linguísticos", "SEG 2 MESTRADO"),
-    DebitCategory("PPGEL +", "PPGEL +", "SEG 2 MESTRADO"),
-    DebitCategory("PPGEnf", "PPG Enfermagem", "SEG 2 MESTRADO"),
-    DebitCategory("PPGFil", "PPG Filosofia", "SEG 2 MESTRADO"),
-    DebitCategory("PPGGeo", "PPG Geografia", "SEG 2 MESTRADO"),
-    DebitCategory("PPGH", "PPG História", "SEG 2 MESTRADO"),
-    DebitCategory("PPGDH", "PPGDH", "SEG 2 MESTRADO", review_required=True),
-    DebitCategory("PROFIAP", "PROFIAP", "SEG 2 MESTRADO"),
-    DebitCategory("PROFMAT", "PROFMAT", "SEG 2 MESTRADO"),
+    DebitCategory(
+        "Lato Oncologia", "Especialização em Enfermagem em Oncologia", "SEG 2 MESTRADO"
+    ),
+    DebitCategory("PPGCB", "Mestrado em Ciências Biomédicas", "SEG 2 MESTRADO"),
+    DebitCategory("PPGE", "Mestrado em Educação", "SEG 2 MESTRADO"),
+    DebitCategory(
+        "PPGEL", "Estudos Linguísticos – Mestrado e Doutorado", "SEG 2 MESTRADO"
+    ),
+    DebitCategory("PPGEL +", "Estudos Linguísticos – Rateio", "SEG 2 MESTRADO"),
+    DebitCategory("PPGEnf", "Mestrado em Enfermagem", "SEG 2 MESTRADO"),
+    DebitCategory("PPGFil", "Mestrado em Filosofia", "SEG 2 MESTRADO"),
+    DebitCategory("PPGGeo", "Mestrado em Geografia", "SEG 2 MESTRADO"),
+    DebitCategory("PPGH", "Mestrado em História", "SEG 2 MESTRADO"),
+    DebitCategory(
+        "PPGDH", "Doutorado em História", "SEG 2 MESTRADO", review_required=True
+    ),
+    DebitCategory(
+        "PROFIAP",
+        "Mestrado Profissional em Administração Pública em Rede Nacional",
+        "SEG 2 MESTRADO",
+    ),
+    DebitCategory(
+        "PROFMAT",
+        "Mestrado Profissional em Matemática em Rede Nacional",
+        "SEG 2 MESTRADO",
+    ),
     DebitCategory("DIREÇÃO", "Geral (Direção/Coordenações)", "SEG 3 OUTROS"),
     DebitCategory("DIREÇÃO - AGAS", "DIREÇÃO - AGAS", "SEG 3 OUTROS"),
     DebitCategory("DIREÇÃO - Banca Libras", "DIREÇÃO - Banca Libras", "SEG 3 OUTROS"),

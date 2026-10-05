@@ -375,8 +375,7 @@ def create_workbook_template(path: Path, reference_path: Path | None = None) -> 
 
 
 def install_base_controls(base: Worksheet) -> None:
-    """Cover future manual rows with choice lists and cancellation highlighting."""
-    from openpyxl.formatting.rule import FormulaRule
+    """Cover future manual rows with choice lists and missing-decision highlighting."""
 
     for column, header in enumerate(BASE_HEADERS, 1):
         base.cell(1, column, header)
@@ -394,18 +393,48 @@ def install_base_controls(base: Worksheet) -> None:
         )
         validation.add(f"Q2:Q{_BASE_LAST_ROW}")
         base.add_data_validation(validation)
-    formula = 'AND($C2="Cancelada",$Q2="",$A2<>"")'
-    if not any(
-        formula in (rule.formula or [])
-        for area in base.conditional_formatting
-        for rule in base.conditional_formatting[area]
-    ):
-        base.conditional_formatting.add(
-            f"A2:Q{_BASE_LAST_ROW}",
-            FormulaRule(formula=[formula], fill=PatternFill("solid", fgColor="FFC7CE")),
-        )
+    install_decision_highlighting(base)
     for column in (14, 15, 16, 17):
         base.column_dimensions[base.cell(1, column).column_letter].width = 26
+
+
+def install_decision_highlighting(base: Worksheet) -> None:
+    """Distinguish undecided cancellations from missing travel classifications."""
+    from openpyxl.formatting.rule import FormulaRule
+
+    red_formula = 'AND($C2="Cancelada",$Q2="",$A2<>"")'
+    yellow_formula = 'AND($A2<>"",$O2="")'
+    managed_formulas = {
+        red_formula,
+        yellow_formula,
+        'AND($Q2="",$A2<>"")',
+        'AND($A2<>"",OR($P2="",$Q2=""))',
+    }
+    for area in list(base.conditional_formatting):
+        rules = base.conditional_formatting[area]
+        rules[:] = [
+            rule
+            for rule in rules
+            if not (
+                rule.formula
+                and len(rule.formula) == 1
+                and rule.formula[0] in managed_formulas
+            )
+        ]
+        if not rules:
+            del base.conditional_formatting[str(area.sqref)]
+        for rule in rules:
+            if rule.priority < 3:
+                rule.priority += 2
+    for formula, color, priority in (
+        (red_formula, "FFC7CE", 1),
+        (yellow_formula, "FFF2CC", 2),
+    ):
+        rule = FormulaRule(
+            formula=[formula], fill=PatternFill("solid", fgColor=color), stopIfTrue=True
+        )
+        rule.priority = priority
+        base.conditional_formatting.add(f"A2:Q{_BASE_LAST_ROW}", rule)
 
 
 def _check_workbook_structure(workbook: Workbook) -> None:
@@ -679,6 +708,8 @@ def _load_workbook_for_refresh(
                 if matches_code_list and covers_base:
                     validation.formula1 = f"={CODE_LIST_NAME}"
                     validation.sqref = f"P2:P{_BASE_LAST_ROW}"
+        if "BASE VIAGENS" in workbook.sheetnames:
+            install_decision_highlighting(workbook["BASE VIAGENS"])
         _check_workbook_structure(workbook)
     except Exception:
         workbook.close()

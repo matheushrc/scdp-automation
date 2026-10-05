@@ -556,7 +556,7 @@ def _check_common_structure(workbook: Workbook) -> None:
 
     base = workbook["BASE VIAGENS"]
     support = workbook["APOIO"]
-    if workbook.defined_names[LAYOUT_NAME].attr_text != '"8"':
+    if workbook.defined_names[LAYOUT_NAME].attr_text != '"9"':
         raise WorkbookValidationError("Versão do layout inválida.")
     name = workbook.defined_names.get(CODE_LIST_NAME)
     if name is None or not same_formula(
@@ -641,6 +641,13 @@ def _load_workbook_for_refresh(
             merge_history(workbook)
             install_names(workbook)
             workbook.defined_names[LAYOUT_NAME].attr_text = '"8"'
+        if (
+            LAYOUT_NAME in workbook.defined_names
+            and workbook.defined_names[LAYOUT_NAME].attr_text == '"8"'
+        ):
+            from scdp_automation.xlsx_code_summary import migrate_code_summary
+
+            migrate_code_summary(workbook)
         if (
             LAYOUT_NAME not in workbook.defined_names
             and "BASE VIAGENS" in workbook.sheetnames

@@ -125,7 +125,7 @@ class FidelityTests(unittest.TestCase):
         self.assertIn("SUMIFS(", formula)
         self.assertIn("SUMPRODUCT(", formula)
         self.assertIn("ApoioA", formula)
-        category_formula = workbook["APOIO"]["M21"].value
+        category_formula = workbook["APOIO"]["L21"].value
         self.assertIn("ViagensC", category_formula)
         self.assertIn("ViagensM", category_formula)
         self.assertNotIn("SUMIFS", workbook["RESUMO GASTOS"]["E28"].value)
@@ -193,7 +193,7 @@ class FidelityTests(unittest.TestCase):
         self.addCleanup(workbook.close)
         for row in range(2, workbook["BASE VIAGENS"].max_row + 1):
             workbook["BASE VIAGENS"].cell(row, 16).value = None
-        for col in (10, 11, 12):
+        for col in (9, 10, 11):
             workbook["APOIO"].cell(21, col).value = None
         workbook["APOIO"]["E21"] = 900
         with self.assertRaisesRegex(ValueError, "rateio"):

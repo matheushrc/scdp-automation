@@ -46,6 +46,13 @@ def install_names(workbook: Workbook) -> None:
         ("RESUMO GASTOS", "Resumo", "BCDEFGHIJKLMNOP"),
     ):
         for column in columns:
+            if (
+                sheet == "APOIO"
+                and column == "I"
+                and workbook["APOIO"]["I1"].value != "Grupo no resumo"
+            ):
+                workbook.defined_names.pop("ApoioI", None)
+                continue
             workbook.defined_names.add(
                 DefinedName(
                     prefix + column,
@@ -55,6 +62,10 @@ def install_names(workbook: Workbook) -> None:
                             64 + BASE_COLUMN_MAP.get(ord(column) - 64, ord(column) - 64)
                         )
                         if sheet == "BASE VIAGENS"
+                        else chr(ord(column) - 1)
+                        if sheet == "APOIO"
+                        and workbook["APOIO"]["I1"].value != "Grupo no resumo"
+                        and column in "JKLM"
                         else column,
                     ),
                 )
@@ -236,7 +247,11 @@ def reorder_base_columns(workbook: Workbook) -> None:
 
 def migrate_adjustments(workbook: Workbook, data: ReferenceData | None = None) -> None:
     """One-time migration; subsequent refreshes never rebuild manual sheets."""
-    from scdp_automation.xlsx_layout import INPUT_HEADERS, LAYOUT_NAME, prepare_ranges
+    from scdp_automation.xlsx_layout import (
+        LAYOUT_NAME,
+        LEGACY_INPUT_HEADERS,
+        prepare_ranges,
+    )
     from scdp_automation.xlsx_output import install_base_controls
 
     support = workbook["APOIO"]
@@ -253,7 +268,7 @@ def migrate_adjustments(workbook: Workbook, data: ReferenceData | None = None) -
             )
         support.cell(row, 5).value = transport
         support.cell(row, 6).value = total_formula(row)
-    for col, header in enumerate(INPUT_HEADERS, 1):
+    for col, header in enumerate(LEGACY_INPUT_HEADERS, 1):
         support.cell(1, col).value = header
     base = workbook["BASE VIAGENS"]
     install_base_controls(base)
@@ -272,17 +287,22 @@ def migrate_adjustments(workbook: Workbook, data: ReferenceData | None = None) -
     reorder_base_columns(workbook)
     merge_history(workbook)
     prepare_ranges(workbook)
-    workbook.defined_names.add(DefinedName(LAYOUT_NAME, attr_text='"8"'))
+    workbook.defined_names.add(DefinedName(LAYOUT_NAME, attr_text='"9"'))
 
 
 def validate_editable_layout(workbook: Workbook) -> None:
     """Validate manual inputs without imposing a fixed row order or formulas."""
-    from scdp_automation.xlsx_layout import INPUT_HEADERS
+    from scdp_automation.xlsx_layout import INPUT_HEADERS, LEGACY_INPUT_HEADERS
     from scdp_automation.xlsx_output import WorkbookValidationError
 
     support = workbook["APOIO"]
+    headers = (
+        LEGACY_INPUT_HEADERS
+        if support["I1"].value == "Grupo no resumo"
+        else INPUT_HEADERS
+    )
     if tuple(c.value for c in support[1]) != (
-        *INPUT_HEADERS,
+        *headers,
         "Total utilizado por categoria (R$)",
     ):
         raise WorkbookValidationError("As colunas de APOIO foram alteradas.")
@@ -309,7 +329,10 @@ def validate_editable_layout(workbook: Workbook) -> None:
                 raise WorkbookValidationError(
                     "Orçamento e transporte em APOIO precisam de valor numérico."
                 )
-        weights = [support.cell(row, col).value for col in (10, 11, 12)]
+        weight_columns = (
+            (10, 11, 12) if support["I1"].value == "Grupo no resumo" else (9, 10, 11)
+        )
+        weights = [support.cell(row, col).value for col in weight_columns]
         if code == "PPGEL +":
             required = any(support.cell(row, col).value for col in (4, 5, 7, 8)) or any(
                 workbook["BASE VIAGENS"].cell(r, 16).value == code

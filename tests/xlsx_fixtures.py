@@ -204,3 +204,24 @@ def reference_fixture(path: Path) -> None:
             base.cell(row + 4, col, value)
     workbook.save(path)
     workbook.close()
+
+
+def restore_legacy_group_layout(workbook) -> None:
+    """Build the old support columns to exercise real upgrade paths."""
+    from unittest.mock import patch
+
+    from scdp_automation.xlsx_layout import prepare_ranges
+
+    support = workbook["APOIO"]
+    support.insert_cols(9)
+    support["I1"] = "Grupo no resumo"
+    for row in range(2, support.max_row + 1):
+        code = support.cell(row, 1).value
+        label = support.cell(row, 2).value
+        if isinstance(code, str) and code.startswith("DIREÇÃO"):
+            label = "OUTROS"
+        elif code == "CAPPG - Res 49":
+            label = "RESOLUÇÃO 049/2022-CONSUNI/CPPGEC"
+        support.cell(row, 9).value = label
+    with patch("scdp_automation.xlsx_code_summary.migrate_code_summary"):
+        prepare_ranges(workbook)

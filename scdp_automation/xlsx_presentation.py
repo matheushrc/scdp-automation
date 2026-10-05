@@ -11,7 +11,7 @@ from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 BASE_WIDTHS = (15, 26, 18, 12, 14, 14, 14, 14, 14, 14, 16, 15, 15, 15, 17, 20, 16)
-SUPPORT_WIDTHS = (20, 26, 16, 16, 16, 16, 14, 14, 26, 12, 12, 12, 18)
+SUPPORT_WIDTHS = (20, 26, 16, 16, 16, 16, 14, 14, 12, 12, 12, 18)
 DATE_HEADERS = {
     "Data de início da viagem",
     "Data de término da viagem",

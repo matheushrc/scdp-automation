@@ -20,7 +20,7 @@ from scdp_automation.xlsx_models import DEBIT_CATEGORIES
 from scdp_automation.xlsx_reference import ReferenceData
 
 LAYOUT_NAME = "SCDPLayoutVersion"
-INPUT_HEADERS = (
+LEGACY_INPUT_HEADERS = (
     "Código de débito",
     "Nome por extenso",
     "Segmento",
@@ -34,6 +34,7 @@ INPUT_HEADERS = (
     "Rateio para PPGEL (%)",
     "Rateio para PPGH (%)",
 )
+INPUT_HEADERS = tuple(h for h in LEGACY_INPUT_HEADERS if h != "Grupo no resumo")
 MAIN_ROWS = (*range(7, 22), *range(26, 36), 41, 43)
 EXTRA_ROWS = (62, 63)
 DETAIL_CODES = (
@@ -147,7 +148,7 @@ def install_layout(
     finally:
         source.close()
     support = workbook["APOIO"]
-    for col, header in enumerate(INPUT_HEADERS, 1):
+    for col, header in enumerate(LEGACY_INPUT_HEADERS, 1):
         support.cell(1, col, header)
     for row, category in enumerate(DEBIT_CATEGORIES, 2):
         inputs = data.inputs.get(category.code)
@@ -299,10 +300,10 @@ def legacy_validate_layout(workbook: Workbook) -> None:
     if (
         tuple(c.value for c in support[1])
         != (
-            *INPUT_HEADERS[:4],
+            *LEGACY_INPUT_HEADERS[:4],
             "Recurso total (R$)",
             "Transportes distribuído (R$)",
-            *INPUT_HEADERS[6:],
+            *LEGACY_INPUT_HEADERS[6:],
         )
         or support.max_row != len(DEBIT_CATEGORIES) + 1
     ):
@@ -470,6 +471,9 @@ def prepare_ranges(workbook: Workbook) -> None:
     for coordinate, formula in summary_formulas(workbook).items():
         summary[coordinate] = formula
     workbook.defined_names.add(DefinedName(LAYOUT_NAME, attr_text='"8"'))
+    from scdp_automation.xlsx_code_summary import migrate_code_summary
+
+    migrate_code_summary(workbook)
 
 
 def summary_formulas(workbook: Workbook) -> dict[str, str]:

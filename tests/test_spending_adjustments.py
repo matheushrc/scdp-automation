@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 from scdp_automation import extrator, xlsx_output
 from scdp_automation.xlsx_models import summarize_trips
 from tests.test_xlsx_output import make_trip
-from tests.xlsx_fixtures import reference_fixture
+from tests.xlsx_fixtures import reference_fixture, restore_legacy_group_layout
 
 
 class DateTests(unittest.IsolatedAsyncioTestCase):
@@ -110,7 +110,7 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
         )
         self.assertEqual(support["E3"].value, 600)
         groups = {
-            support.cell(r, 1).value: support.cell(r, 9).value
+            support.cell(r, 1).value: support.cell(r, 2).value
             for r in range(2, support.max_row + 1)
         }
         self.assertIn("PPGH/PPGDH", groups)
@@ -194,6 +194,7 @@ class MigrationTests(unittest.TestCase):
         current, candidate = self.root / "current.xlsx", self.root / "candidate.xlsx"
         xlsx_output.import_reference_workbook(self.reference, current)
         workbook = load_workbook(current)
+        restore_legacy_group_layout(workbook)
         support = workbook["APOIO"]
         for r in range(2, support.max_row + 1):
             daily, transport = support.cell(r, 4).value, support.cell(r, 5).value
@@ -269,6 +270,7 @@ class ColumnOrderTests(unittest.TestCase):
             reference_fixture(reference)
             xlsx_output.import_reference_workbook(reference, current)
             workbook = load_workbook(current)
+            restore_legacy_group_layout(workbook)
             support = workbook["APOIO"]
             history_row = next(
                 r
@@ -338,7 +340,7 @@ class ColumnOrderTests(unittest.TestCase):
                 if support.cell(r, 1).value in ("PPGH", "PPGDH", "PPGH/PPGDH")
             ]
             self.assertEqual(support.cell(manual_row, 6).value, "=1+2")
-            self.assertEqual(support.cell(manual_row, 13).value, "=3+4")
+            self.assertEqual(support.cell(manual_row, 12).value, "=3+4")
             self.assertEqual(
                 workbook["RESUMO GASTOS"]["F8"].value, f"=APOIO!D{manual_row}"
             )

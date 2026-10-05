@@ -505,26 +505,32 @@ def _check_workbook_structure(workbook: Workbook) -> None:
 
 
 def _check_common_structure(workbook: Workbook) -> None:
-    from scdp_automation.xlsx_layout import LAYOUT_NAME
+    from scdp_automation.xlsx_layout import (
+        LAYOUT_NAME,
+        same_formula,
+        support_limit,
+        support_range,
+    )
 
     base = workbook["BASE VIAGENS"]
     support = workbook["APOIO"]
-    if workbook.defined_names[LAYOUT_NAME].attr_text != '"3"':
+    if workbook.defined_names[LAYOUT_NAME].attr_text != '"5"':
         raise WorkbookValidationError("Versão do layout inválida.")
     name = workbook.defined_names.get(CODE_LIST_NAME)
-    if name is None or name.attr_text != f"'APOIO'!$A$2:$A${support.max_row}":
+    limit = support_limit(workbook)
+    if name is None or not same_formula("=" + name.attr_text, "=" + support_range("A")):
         raise WorkbookValidationError("Lista de códigos de débito ausente.")
     validations = base.data_validations.dataValidation
     if not any(
         v.type == "list"
-        and v.formula1 == f"={CODE_LIST_NAME}"
+        and v.formula1 in (f"={CODE_LIST_NAME}", CODE_LIST_NAME)
         and str(v.sqref) == f"M2:M{_BASE_LAST_ROW}"
         for v in validations
     ):
         raise WorkbookValidationError("Validação de códigos de débito ausente.")
     if BASE_TABLE_NAME not in base.tables or SUPPORT_TABLE_NAME not in support.tables:
         raise WorkbookValidationError("Tabela necessária ausente.")
-    if support.tables[SUPPORT_TABLE_NAME].ref != f"A1:L{support.max_row}":
+    if support.tables[SUPPORT_TABLE_NAME].ref != f"A1:M{limit}":
         raise WorkbookValidationError("Tabela APOIO malformada.")
     calculation = workbook.calculation
     if (
@@ -556,10 +562,44 @@ def _load_workbook_for_refresh(path: Path) -> Workbook:
             f"Não foi possível abrir o workbook existente em {path}."
         ) from error
     try:
-        from scdp_automation.xlsx_layout import LAYOUT_NAME, update_display_names
+        from scdp_automation.xlsx_layout import (
+            LAYOUT_NAME,
+            legacy_validate_layout,
+            prepare_ranges,
+            update_display_names,
+        )
 
-        if LAYOUT_NAME in workbook.defined_names:
+        if (
+            LAYOUT_NAME in workbook.defined_names
+            and workbook.defined_names[LAYOUT_NAME].attr_text == '"3"'
+        ):
             update_display_names(workbook)
+            legacy_validate_layout(workbook)
+            prepare_ranges(workbook)
+        if LAYOUT_NAME in workbook.defined_names and workbook.calculation is not None:
+            if workbook.calculation.calcMode is None:
+                workbook.calculation.calcMode = "auto"
+            workbook.calculation.fullCalcOnLoad = True
+            workbook.calculation.forceFullCalc = True
+            base = workbook["BASE VIAGENS"]
+            for validation in base.data_validations.dataValidation:
+                matches_code_list = (
+                    validation.type == "list"
+                    and validation.formula1
+                    in (
+                        CODE_LIST_NAME,
+                        f"={CODE_LIST_NAME}",
+                    )
+                )
+                covers_base = any(
+                    area.min_col == area.max_col == 13
+                    and area.min_row == 2
+                    and area.max_row >= base.max_row
+                    for area in validation.sqref.ranges
+                )
+                if matches_code_list and covers_base:
+                    validation.formula1 = f"={CODE_LIST_NAME}"
+                    validation.sqref = f"M2:M{_BASE_LAST_ROW}"
         _check_workbook_structure(workbook)
     except Exception:
         workbook.close()
@@ -574,6 +614,13 @@ def _write_base_rows(
 ) -> None:
     base = workbook["BASE VIAGENS"]
     support_last_row = workbook["APOIO"].max_row
+    from scdp_automation.xlsx_layout import (
+        LAYOUT_NAME,
+        range_segment_formula,
+        support_limit,
+    )
+
+    ranged = LAYOUT_NAME in workbook.defined_names
     old_last_row = max(base.max_row, 2)
     target_last_row = max(2, len(summaries) + 1)
     style_source = [copy(cell._style) for cell in base[2]]
@@ -611,7 +658,13 @@ def _write_base_rows(
 
         for column, value in enumerate(values, start=1):
             base.cell(row, column, value)
-        base.cell(row, 12, _segment_formula(row, support_last_row))
+        base.cell(
+            row,
+            12,
+            range_segment_formula(row, support_limit(workbook))
+            if ranged
+            else _segment_formula(row, support_last_row),
+        )
         base.cell(row, 13).value = manual_codes.get(pcdp)
         base.cell(row, 4).number_format = "0.0"
         for column in range(5, 12):
@@ -745,7 +798,19 @@ def _validate_candidate(
                     "O candidato contém código de débito desconhecido."
                 )
             segment_formula = base.cell(row, 12).value
-            if segment_formula != _segment_formula(row, support.max_row):
+            from scdp_automation.xlsx_layout import (
+                LAYOUT_NAME,
+                range_segment_formula,
+                same_formula,
+                support_limit,
+            )
+
+            expected_segment = (
+                range_segment_formula(row, support_limit(workbook))
+                if LAYOUT_NAME in workbook.defined_names
+                else _segment_formula(row, support.max_row)
+            )
+            if not same_formula(segment_formula, expected_segment):
                 raise WorkbookValidationError(
                     "A fórmula Segmento está ausente ou foi alterada na base."
                 )

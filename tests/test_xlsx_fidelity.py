@@ -79,13 +79,16 @@ class FidelityTests(unittest.TestCase):
                 )
         self.assertEqual(summary.column_dimensions["B"].width, 44)
         self.assertEqual(summary.row_dimensions[5].height, 32)
-        self.assertIn("SUMIFS", summary["F8"].value)
+        self.assertIn("SUMIF", summary["F8"].value)
         self.assertEqual(summary["G8"].value, '=IF(ISNUMBER(E8),E8-F8,"Pendente")')
         self.assertIn("APOIO", summary["J8"].value)
         self.assertEqual(
             summary["M8"].value, '=IF(AND(ISNUMBER(G8),ISNUMBER(K8)),G8+K8,"Pendente")'
         )
-        self.assertEqual(summary["F68"].value, "=SUM(F45,F62:F63,F66)")
+        self.assertEqual(
+            summary["F68"].value,
+            "=SUM(OFFSET('BASE VIAGENS'!$K$1,1,0,MAX(1,'RESUMO GASTOS'!$R$2),1))",
+        )
 
     def test_refresh_preserves_budget_transport_and_classification(self):
         current = self.root / "current.xlsx"
@@ -120,9 +123,12 @@ class FidelityTests(unittest.TestCase):
         workbook = load_workbook(path)
         self.addCleanup(workbook.close)
         formula = workbook["RESUMO GASTOS"]["F28"].value
-        self.assertEqual(formula.count("SUMIFS("), 2)
-        self.assertIn("'BASE VIAGENS'!$L:$L", formula)
-        self.assertIn("'BASE VIAGENS'!$M:$M", formula)
+        self.assertIn("SUMIF(", formula)
+        self.assertIn("SUMPRODUCT(", formula)
+        self.assertIn("OFFSET('APOIO'!$M$1", formula)
+        category_formula = workbook["APOIO"]["M21"].value
+        self.assertIn("OFFSET('BASE VIAGENS'!$L$1", category_formula)
+        self.assertIn("OFFSET('BASE VIAGENS'!$M$1", category_formula)
         self.assertNotIn("SUMIFS", workbook["RESUMO GASTOS"]["E28"].value)
 
     def test_unknown_formula_or_bad_transport_prevents_publication(self):

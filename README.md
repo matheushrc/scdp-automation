@@ -104,6 +104,38 @@ Esse workbook tem três worksheets:
   quando o workbook é aberto. Categorias adicionais e pendências ficam abaixo
   do quadro original e entram no total consolidado.
 
+### Inclusão de categorias em APOIO
+
+Use a próxima linha vazia da tabela de `APOIO`. Preencha código único, nome,
+segmento e `Grupo no resumo`. O grupo deve ter o mesmo nome de uma linha do
+resumo; assim, a categoria entra nas somas existentes sem editar fórmulas.
+Preencha os valores de orçamento e transporte que forem conhecidos.
+
+As colunas F (transportes distribuído) e M (total utilizado por categoria)
+são calculadas. As colunas J:L são exclusivas do rateio `PPGEL +`.
+Os gastos entram ao classificar as viagens em `BASE VIAGENS` com o novo código.
+Categorias com grupos inexistentes aparecem como pendência no resumo; os gastos
+continuam no total consolidado. Criar uma linha própria para um novo grupo no
+quadro visual ainda exige ajustar esse quadro.
+
+As buscas usam `VLOOKUP` (`PROCV`) com correspondência exata. Os agrupamentos
+usam `SUMIF`, `SUMIFS`, `SUMPRODUCT`, `COUNTIFS` e `ISNUMBER` sobre intervalos,
+sem `XLOOKUP`, matrizes dinâmicas ou referências estruturadas nas fórmulas.
+O Excel antigo com essas funções e o Google Sheets oferecem as funções usadas;
+a importação do arquivo específico no Sheets ainda deve ser conferida.
+Os intervalos de APOIO e BASE VIAGENS usam `OFFSET` (`DESLOC`) até a
+última categoria ou viagem preenchida, sem reservar 1.000 ou 10.000 linhas.
+A identificação da última linha considera espaços vazios no meio dos dados.
+RESUMO GASTOS soma esses intervalos dinâmicos.
+
+Ao inserir uma linha em APOIO ou BASE VIAGENS, copie uma linha existente para
+preservar as fórmulas das colunas calculadas e preencha os dados novos.
+`OFFSET` amplia os intervalos de consulta e soma; o preenchimento das fórmulas
+da nova linha depende dessa cópia ou do preenchimento automático da tabela.
+
+Fontes: [SUMIFS no LibreOffice](https://help.libreoffice.org/latest/en-US/text/scalc/01/func_sumifs.html),
+[VLOOKUP no Google Sheets](https://support.google.com/docs/answer/3093318?hl=en).
+
 O gerador existente publica em `output/gastos_scdp_2026.xlsx`, substituindo a
 planilha anterior com backup. A criação e atualização usam o formato original
 no mesmo fluxo de extração. A referência é somente lida; não é alterada.

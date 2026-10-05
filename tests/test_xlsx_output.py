@@ -201,8 +201,13 @@ class DebitCategoryTests(unittest.TestCase):
 
         category_by_code = {item.code: item for item in DEBIT_CATEGORIES}
         self.assertEqual(category_by_code["AGRONOMIA"].name, "Agronomia")
-        self.assertEqual(category_by_code["Lato Oncologia"].name, "LS Enf em Oncologia")
-        self.assertEqual(category_by_code["PPGEL +"].name, "PPGEL +")
+        self.assertEqual(
+            category_by_code["Lato Oncologia"].name,
+            "Especialização em Enfermagem em Oncologia",
+        )
+        self.assertEqual(
+            category_by_code["PPGEL +"].name, "Estudos Linguísticos – Rateio"
+        )
         self.assertEqual(
             category_by_code["DIREÇÃO"].name, "Geral (Direção/Coordenações)"
         )

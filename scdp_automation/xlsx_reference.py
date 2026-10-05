@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -31,6 +32,7 @@ class ReferenceData:
     labels: dict[str, str]
     occurrences: int
     rateio: tuple[float, float, float] | None
+    decisions: dict[str, str] = field(default_factory=dict)
 
 
 def number(value: object, location: str) -> float:
@@ -51,7 +53,7 @@ def canonical_code(value: object) -> str | None:
     code = value.strip()
     if code == "LS Enf em Oncologia":
         code = "Lato Oncologia"
-    if code not in {category.code for category in DEBIT_CATEGORIES}:
+    if code not in {category.code for category in DEBIT_CATEGORIES} | {"PPGH", "PPGDH"}:
         raise ValueError("Código de débito desconhecido na referência.")
     return code
 
@@ -88,6 +90,8 @@ def _read_reference(formulas: Workbook, cached: Workbook) -> ReferenceData:
     current: tuple[str, str, str, str | None] | None = None
     subtotal: tuple[float, float, float] | None = None
     occurrences = 0
+    starts: list[date] = []
+    ends: list[date] = []
     for row in range(5, base.max_row + 1):
         pcdp = base.cell(row, 4).value
         if isinstance(pcdp, str) and re.fullmatch(PCDP_PATTERN, pcdp):
@@ -100,7 +104,9 @@ def _read_reference(formulas: Workbook, cached: Workbook) -> ReferenceData:
             code = canonical_code(base.cell(row, 3).value)
             if code:
                 expected_segment = next(
-                    c.segment for c in DEBIT_CATEGORIES if c.code == code
+                    c.segment
+                    for c in DEBIT_CATEGORIES
+                    if c.code == ("PPGH/PPGDH" if code in ("PPGH", "PPGDH") else code)
                 )
                 if base.cell(row, 2).value != expected_segment:
                     raise ValueError(
@@ -108,8 +114,20 @@ def _read_reference(formulas: Workbook, cached: Workbook) -> ReferenceData:
                     )
             current = pcdp, proposed, status, code
             subtotal = None
+            starts, ends = [], []
         if current is None:
             continue
+        for column, dates in ((11, starts), (12, ends)):
+            value = base.cell(row, column).value
+            if isinstance(value, datetime):
+                dates.append(value.date())
+            elif isinstance(value, date):
+                dates.append(value)
+            elif isinstance(value, str) and re.fullmatch(
+                r"\d{2}/\d{2}/\d{4}", value.strip()
+            ):
+                day, month, year = map(int, value.strip().split("/"))
+                dates.append(date(year, month, day))
         if (
             base.cell(row, 15).value == "Sub-Total"
             or base.cell(row, 4).value == "Sub-Total"
@@ -151,6 +169,8 @@ def _read_reference(formulas: Workbook, cached: Workbook) -> ReferenceData:
             restitution,
             reimbursement,
             total,
+            min(starts) if starts else None,
+            max(ends) if ends else None,
         )
         previous = trips.get(pcdp)
         if previous is not None and previous != trip:
@@ -230,6 +250,58 @@ def _read_reference(formulas: Workbook, cached: Workbook) -> ReferenceData:
             amounts[1] / split_total,
             amounts[2] / split_total,
         )
+    decisions = infer_decisions(tuple(trips.values()), codes, cached)
+    history_inputs = [inputs[c] for c in ("PPGH", "PPGDH") if c in inputs]
+    if history_inputs:
+        combined = {}
+        for key in ("total", "daily", "transport", "scheduled", "paid"):
+            numbers = [
+                getattr(v, key) for v in history_inputs if getattr(v, key) is not None
+            ]
+            combined[key] = sum(numbers) if numbers else None
+        inputs["PPGH/PPGDH"] = BudgetInputs(**combined)
+        labels["PPGH/PPGDH"] = "Mestrado e Doutorado em História"
+    codes = {
+        pcdp: "PPGH/PPGDH" if code in ("PPGH", "PPGDH") else code
+        for pcdp, code in codes.items()
+    }
     return ReferenceData(
-        tuple(trips.values()), codes, inputs, labels, occurrences, rateio
+        tuple(trips.values()), codes, inputs, labels, occurrences, rateio, decisions
     )
+
+
+def infer_decisions(
+    trips: tuple[TripSummary, ...], codes: dict[str, str], cached: Workbook
+) -> dict[str, str]:
+    """Require reconciliation with original utilized amounts, never status alone."""
+    utilized = {}
+    support = cached["APOIO"]
+    for row in range(41, support.max_row + 1):
+        raw_code = support.cell(row, 2).value
+        amount = support.cell(row, 3).value
+        if not isinstance(raw_code, str) or not isinstance(amount, (int, float)):
+            continue
+        try:
+            code = canonical_code(raw_code)
+        except TypeError, ValueError:
+            continue
+        if code:
+            utilized[code] = float(amount)
+    decisions = {}
+    for code, amount in utilized.items():
+        members = [t for t in trips if codes.get(t.pcdp) == code]
+        cancelled = [t for t in members if t.status == "Cancelada"]
+        if not members or any(t.trip_total < 0 for t in cancelled):
+            continue
+        included = sum(t.trip_total for t in members)
+        excluded = sum(t.trip_total for t in members if t.status != "Cancelada")
+        all_in = math.isclose(amount, included, abs_tol=0.005)
+        all_out = math.isclose(amount, excluded, abs_tol=0.005)
+        for trip in members:
+            if trip.trip_total == 0:
+                continue
+            if trip.status != "Cancelada" and (all_in or all_out):
+                decisions[trip.pcdp] = "Sim"
+            elif trip.status == "Cancelada" and all_in != all_out:
+                decisions[trip.pcdp] = "Sim" if all_in else "Não"
+    return decisions

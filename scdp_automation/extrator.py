@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import re
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 from playwright.async_api import Error as PlaywrightError
@@ -334,6 +336,15 @@ async def _consult_with_safe_failure(
         ) from None
 
 
+def needs_verification(trip: Viagem, execution_date: date) -> bool:
+    """Future trips are consulted every run, regardless of their checkpoint."""
+    return (
+        trip.data_inicio > execution_date
+        or trip.descricao_do_motivo_da_viagem is None
+        or trip.data_da_ultima_verificacao is None
+    )
+
+
 async def collect_pending_descriptions(
     page: Page,
     trips: list[Viagem],
@@ -348,6 +359,9 @@ async def collect_pending_descriptions(
             trip.descricao_do_motivo_da_viagem = await _consult_with_safe_failure(
                 page, trip.numero_da_solicitacao, index, len(pending)
             )
+            trip.data_da_ultima_verificacao = datetime.now(
+                ZoneInfo("America/Sao_Paulo")
+            ).date()
             save_json(output, trips)
             logger.info("Descrição {} de {} gravada.", index, len(pending))
 
@@ -414,6 +428,7 @@ async def run(argv: list[str] | None = None) -> None:
             old = previous.get(trip.numero_da_solicitacao)
             if old is not None:
                 trip.descricao_do_motivo_da_viagem = old.descricao_do_motivo_da_viagem
+                trip.data_da_ultima_verificacao = old.data_da_ultima_verificacao
         backup = save_checkpoint_and_publish(trips, output)
         logger.info("Workbook de gastos atualizado em {}.", DEFAULT_WORKBOOK.resolve())
         if backup is None:
@@ -424,7 +439,11 @@ async def run(argv: list[str] | None = None) -> None:
             "Classifique PCDPs sem código na última coluna de BASE VIAGENS e "
             "preencha as alocações anuais em APOIO."
         )
-        pending = [v for v in trips if v.descricao_do_motivo_da_viagem is None]
+        pending = [
+            v
+            for v in trips
+            if needs_verification(v, datetime.now(ZoneInfo("America/Sao_Paulo")).date())
+        ]
         if args.limite:
             pending = pending[: args.limite]
         logger.info(
@@ -433,6 +452,7 @@ async def run(argv: list[str] | None = None) -> None:
             len(pending),
         )
         await collect_pending_descriptions(page, trips, pending, output)
+        save_checkpoint_and_publish(trips, output)
         remaining = sum(v.descricao_do_motivo_da_viagem is None for v in trips)
         logger.info("JSON atualizado em {}.", output.resolve())
         logger.info("Descrições pendentes: {}.", remaining)

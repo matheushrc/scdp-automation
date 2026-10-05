@@ -35,7 +35,7 @@ class FidelityTests(unittest.TestCase):
         base = workbook["BASE VIAGENS"]
         self.assertEqual(base.max_row, 3)
         self.assertEqual(
-            [base.cell(r, 13).value for r in (2, 3)], ["AGRONOMIA", "PPGEL +"]
+            [base.cell(r, 16).value for r in (2, 3)], ["AGRONOMIA", "PPGEL +"]
         )
         support = workbook["APOIO"]
         row = next(
@@ -44,10 +44,10 @@ class FidelityTests(unittest.TestCase):
             if support.cell(r, 1).value == "AGRONOMIA"
         )
         self.assertEqual(
-            [support.cell(row, c).value for c in (4, 5, 7, 8)], [400, 1000, 200, 150]
+            [support.cell(row, c).value for c in (4, 5, 7, 8)], [400, 600, 200, 150]
         )
         self.assertEqual(
-            support.cell(row, 6).value, '=IF(AND(ISNUMBER(D3),ISNUMBER(E3)),E3-D3,"")'
+            support.cell(row, 6).value, '=IF(AND(ISNUMBER(D3),ISNUMBER(E3)),D3+E3,"")'
         )
         summary = workbook["RESUMO GASTOS"]
         original = source["RESUMO GASTOS"]
@@ -79,16 +79,15 @@ class FidelityTests(unittest.TestCase):
                 )
         self.assertEqual(summary.column_dimensions["B"].width, 44)
         self.assertEqual(summary.row_dimensions[5].height, 32)
-        self.assertIn("SUMIF", summary["F8"].value)
-        self.assertEqual(summary["G8"].value, '=IF(ISNUMBER(E8),E8-F8,"Pendente")')
-        self.assertIn("APOIO", summary["J8"].value)
+        self.assertIn("SUMIFS", summary["F8"].value)
+        self.assertEqual(
+            summary["G8"].value, '=IF(AND(ISNUMBER(E8),ISNUMBER(F8)),E8-F8,"Pendente")'
+        )
+        self.assertIn("Apoio", summary["J8"].value)
         self.assertEqual(
             summary["M8"].value, '=IF(AND(ISNUMBER(G8),ISNUMBER(K8)),G8+K8,"Pendente")'
         )
-        self.assertEqual(
-            summary["F68"].value,
-            "=SUM(OFFSET('BASE VIAGENS'!$K$1,1,0,MAX(1,'RESUMO GASTOS'!$R$2),1))",
-        )
+        self.assertIn('COUNTIFS(ViagensC,"Cancelada",ViagensN,""', summary["F68"].value)
 
     def test_refresh_preserves_budget_transport_and_classification(self):
         current = self.root / "current.xlsx"
@@ -110,7 +109,7 @@ class FidelityTests(unittest.TestCase):
         refreshed = load_workbook(candidate)
         self.addCleanup(refreshed.close)
         self.assertEqual(
-            [refreshed["BASE VIAGENS"].cell(r, 13).value for r in (2, 3, 4)],
+            [refreshed["BASE VIAGENS"].cell(r, 16).value for r in (2, 3, 4)],
             ["PPGEL +", "AGRONOMIA", None],
         )
         self.assertEqual(
@@ -123,23 +122,23 @@ class FidelityTests(unittest.TestCase):
         workbook = load_workbook(path)
         self.addCleanup(workbook.close)
         formula = workbook["RESUMO GASTOS"]["F28"].value
-        self.assertIn("SUMIF(", formula)
+        self.assertIn("SUMIFS(", formula)
         self.assertIn("SUMPRODUCT(", formula)
-        self.assertIn("OFFSET('APOIO'!$M$1", formula)
+        self.assertIn("ApoioA", formula)
         category_formula = workbook["APOIO"]["M21"].value
-        self.assertIn("OFFSET('BASE VIAGENS'!$L$1", category_formula)
-        self.assertIn("OFFSET('BASE VIAGENS'!$M$1", category_formula)
+        self.assertIn("ViagensC", category_formula)
+        self.assertIn("ViagensM", category_formula)
         self.assertNotIn("SUMIFS", workbook["RESUMO GASTOS"]["E28"].value)
 
-    def test_unknown_formula_or_bad_transport_prevents_publication(self):
+    def test_manual_summary_is_preserved_but_bad_transport_prevents_publication(self):
         path = self.root / "rebuilt.xlsx"
         xlsx_output.import_reference_workbook(self.reference, path)
         for coordinate, value in (("F8", "=0"), ("J8", 0)):
             with self.subTest(coordinate=coordinate):
                 workbook = load_workbook(path)
                 workbook["RESUMO GASTOS"][coordinate] = value
-                with self.assertRaisesRegex(ValueError, "fórmula"):
-                    xlsx_output._check_workbook_structure(workbook)
+                xlsx_output._check_workbook_structure(workbook)
+                self.assertEqual(workbook["RESUMO GASTOS"][coordinate].value, value)
                 workbook.close()
         workbook = load_workbook(path)
         workbook["APOIO"]["G3"] = "inválido"
@@ -153,7 +152,7 @@ class FidelityTests(unittest.TestCase):
             xlsx_output.publish_workbook([make_trip("999001/26")], path)
         workbook = load_workbook(path)
         self.addCleanup(workbook.close)
-        self.assertEqual(workbook["BASE VIAGENS"]["M2"].value, "AGRONOMIA")
+        self.assertEqual(workbook["BASE VIAGENS"]["P2"].value, "AGRONOMIA")
         self.assertEqual(workbook["RESUMO GASTOS"]["B5"].value, "CURSOS DE GRADUAÇÃO")
 
     def test_reference_cannot_be_used_as_output(self):
@@ -174,7 +173,7 @@ class FidelityTests(unittest.TestCase):
         workbook = load_workbook(candidate)
         self.addCleanup(workbook.close)
         self.assertEqual(
-            [workbook["BASE VIAGENS"].cell(r, 13).value for r in (2, 3, 4)],
+            [workbook["BASE VIAGENS"].cell(r, 16).value for r in (2, 3, 4)],
             [None, "PPGEL +", "AGRONOMIA"],
         )
 
@@ -193,7 +192,7 @@ class FidelityTests(unittest.TestCase):
         workbook = load_workbook(path)
         self.addCleanup(workbook.close)
         for row in range(2, workbook["BASE VIAGENS"].max_row + 1):
-            workbook["BASE VIAGENS"].cell(row, 13).value = None
+            workbook["BASE VIAGENS"].cell(row, 16).value = None
         for col in (10, 11, 12):
             workbook["APOIO"].cell(21, col).value = None
         workbook["APOIO"]["E21"] = 900

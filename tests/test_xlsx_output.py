@@ -2,6 +2,7 @@ import unittest
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -110,6 +111,8 @@ class TripSummaryTests(unittest.TestCase):
                 restitution_amount=5.02,
                 reimbursement_amount=6.03,
                 trip_total=2063.66,
+                start_date=date(2026, 3, 1),
+                end_date=date(2026, 3, 5),
             ),
         )
 
@@ -180,8 +183,7 @@ class DebitCategoryTests(unittest.TestCase):
                 "PPGEnf",
                 "PPGFil",
                 "PPGGeo",
-                "PPGH",
-                "PPGDH",
+                "PPGH/PPGDH",
                 "PROFIAP",
                 "PROFMAT",
                 "DIREÇÃO",
@@ -228,14 +230,14 @@ class DebitCategoryTests(unittest.TestCase):
             "C ECONÔMICAS",
             "LETRAS",
             "PPGFil",
-            "PPGDH",
+            "PPGH/PPGDH",
             "PROFMAT",
         ):
             self.assertIn(code, category_by_code)
 
-        ppghd = category_by_code["PPGDH"]
-        self.assertTrue(ppghd.review_required)
-        self.assertEqual(ppghd.name, "PPGDH")
+        ppghd = category_by_code["PPGH/PPGDH"]
+        self.assertFalse(ppghd.review_required)
+        self.assertEqual(ppghd.name, "Mestrado e Doutorado em História")
 
 
 class WorkbookTemplateTests(unittest.TestCase):
@@ -259,8 +261,12 @@ class WorkbookTemplateTests(unittest.TestCase):
             "Restituição (R$)",
             "Reembolso (R$)",
             "Total da viagem (R$)",
+            "Data de início da viagem",
+            "Data de término da viagem",
+            "Data da última verificação",
             "Segmento",
             "Código de débito",
+            "Descontar do curso?",
         ]
 
         with TemporaryDirectory() as directory:
@@ -281,7 +287,7 @@ class WorkbookTemplateTests(unittest.TestCase):
                 "Alocação inicial (R$)",
             ],
         )
-        self.assertEqual(workbook["BASE VIAGENS"].cell(1, 13).value, "Código de débito")
+        self.assertEqual(workbook["BASE VIAGENS"].cell(1, 16).value, "Código de débito")
         self.assertTrue(workbook.calculation.fullCalcOnLoad)
         self.assertTrue(workbook.calculation.forceFullCalc)
         self.assertEqual(workbook.calculation.calcMode, "auto")
@@ -311,11 +317,13 @@ class WorkbookTemplateTests(unittest.TestCase):
         ppghd_row = next(
             row
             for row in range(2, support.max_row + 1)
-            if support.cell(row, 1).value == "PPGDH"
+            if support.cell(row, 1).value == "PPGH/PPGDH"
         )
-        self.assertEqual(support.cell(ppghd_row, 2).value, "PPGDH")
+        self.assertEqual(
+            support.cell(ppghd_row, 2).value, "Mestrado e Doutorado em História"
+        )
         self.assertIsNotNone(support.cell(ppghd_row, 2).comment)
-        self.assertIn("conflit", support.cell(ppghd_row, 2).comment.text.lower())
+        self.assertIn("compartilhada", support.cell(ppghd_row, 2).comment.text.lower())
 
     def test_base_code_column_has_dropdown_validation(self) -> None:
         with TemporaryDirectory() as directory:
@@ -325,11 +333,11 @@ class WorkbookTemplateTests(unittest.TestCase):
         validations = [
             validation
             for validation in base.data_validations.dataValidation
-            if validation.type == "list"
+            if validation.type == "list" and validation.formula1 == "=CodigosDebito"
         ]
         self.assertEqual(len(validations), 1)
         self.assertEqual(validations[0].formula1, "=CodigosDebito")
-        self.assertEqual(str(validations[0].sqref), "M2:M1048576")
+        self.assertEqual(str(validations[0].sqref), "P2:P1048576")
 
         named_range = workbook.defined_names["CodigosDebito"]
         self.assertEqual(
@@ -349,8 +357,8 @@ class WorkbookTemplateTests(unittest.TestCase):
         self.assertIn("CANCELADAS (R$)", headers)
 
         self.assertTrue(summary["O2"].value.startswith("=SUMIFS("))
-        self.assertIn("'BASE VIAGENS'!$L:$L,$A2", summary["O2"].value)
-        self.assertIn("'BASE VIAGENS'!$M:$M,$B2", summary["O2"].value)
+        self.assertIn("'BASE VIAGENS'!$O:$O,$A2", summary["O2"].value)
+        self.assertIn("'BASE VIAGENS'!$P:$P,$B2", summary["O2"].value)
         self.assertEqual(summary["J2"].value, "=G2+H2-I2")
         self.assertEqual(summary["M2"].value, "=K2+L2")
         self.assertEqual(summary["Q2"].value, "=O2")
@@ -435,7 +443,7 @@ class WorkbookTemplateTests(unittest.TestCase):
         summary = workbook["RESUMO GASTOS"]
         base = workbook["BASE VIAGENS"]
         self.assertEqual(
-            [base.cell(row, 13).value for row in range(2, 5)],
+            [base.cell(row, 16).value for row in range(2, 5)],
             ["AGRONOMIA", "AFAST PAÍS", "AFAST PAÍS"],
         )
         rows_by_code = {
@@ -458,8 +466,8 @@ class WorkbookTemplateTests(unittest.TestCase):
         used_formula = summary.cell(active_row, 15).value
         self.assertTrue(used_formula.startswith("=SUMIFS("))
         self.assertIn("'BASE VIAGENS'!$K:$K", used_formula)
-        self.assertIn(f"'BASE VIAGENS'!$L:$L,$A{active_row}", used_formula)
-        self.assertIn(f"'BASE VIAGENS'!$M:$M,$B{active_row}", used_formula)
+        self.assertIn(f"'BASE VIAGENS'!$O:$O,$A{active_row}", used_formula)
+        self.assertIn(f"'BASE VIAGENS'!$P:$P,$B{active_row}", used_formula)
         self.assertEqual(summary.cell(active_row, 17).value, f"=O{active_row}")
         self.assertNotIn("+P", summary.cell(active_row, 17).value)
         self.assertNotIn("+L", summary.cell(active_row, 17).value)
@@ -501,12 +509,12 @@ def write_existing_workbook(
             base.cell(row, column, value)
         base.cell(
             row,
-            12,
-            Translator(base["L2"].value, origin="L2").translate_formula(f"L{row}"),
+            15,
+            Translator(base["O2"].value, origin="O2").translate_formula(f"O{row}"),
         )
-        base.cell(row, 13, codes.get(summary.pcdp))
+        base.cell(row, 16, codes.get(summary.pcdp))
 
-    base.tables["tblBaseViagens"].ref = f"A1:M{max(2, len(trips) + 1)}"
+    base.tables["tblBaseViagens"].ref = f"A1:Q{max(2, len(trips) + 1)}"
     support = workbook["APOIO"]
     for row in range(2, support.max_row + 1):
         code = support.cell(row, 1).value
@@ -522,7 +530,7 @@ def read_base_rows(path: Path) -> dict[str, tuple[object, ...]]:
     base = workbook["BASE VIAGENS"]
     rows = {
         base.cell(row, 1).value: tuple(
-            base.cell(row, column).value for column in range(1, 14)
+            base.cell(row, column).value for column in range(1, 17)
         )
         for row in range(2, base.max_row + 1)
         if base.cell(row, 1).value
@@ -557,8 +565,8 @@ class WorkbookRefreshTests(unittest.TestCase):
             self.assertEqual(
                 list(rows), ["123456/26-2C", "234567/26-1C", "123456/26-1C"]
             )
-            self.assertEqual(rows["123456/26-2C"][12], "PPGEL +")
-            self.assertEqual(rows["123456/26-1C"][12], "AGRONOMIA")
+            self.assertEqual(rows["123456/26-2C"][15], "PPGEL +")
+            self.assertEqual(rows["123456/26-1C"][15], "AGRONOMIA")
 
     def test_refresh_leaves_new_pcdp_code_blank(self) -> None:
         existing = make_trip("123456/26")
@@ -574,8 +582,8 @@ class WorkbookRefreshTests(unittest.TestCase):
             build_candidate([existing, added], current, candidate)
 
             rows = read_base_rows(candidate)
-            self.assertEqual(rows[existing.numero_da_solicitacao][12], "AGRONOMIA")
-            self.assertIsNone(rows[added.numero_da_solicitacao][12])
+            self.assertEqual(rows[existing.numero_da_solicitacao][15], "AGRONOMIA")
+            self.assertIsNone(rows[added.numero_da_solicitacao][15])
 
     def test_refresh_preserves_manual_allocations_and_formula_cells(self) -> None:
         first = make_trip("123456/26")

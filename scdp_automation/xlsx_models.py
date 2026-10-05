@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 
 from scdp_automation.relatorio import Viagem
 
@@ -33,6 +34,9 @@ class TripSummary:
     restitution_amount: float
     reimbursement_amount: float
     trip_total: float
+    start_date: date | None = None
+    end_date: date | None = None
+    verified_date: date | None = None
 
 
 DEBIT_CATEGORIES: tuple[DebitCategory, ...] = (
@@ -65,10 +69,7 @@ DEBIT_CATEGORIES: tuple[DebitCategory, ...] = (
     DebitCategory("PPGEnf", "Mestrado em Enfermagem", "SEG 2 MESTRADO"),
     DebitCategory("PPGFil", "Mestrado em Filosofia", "SEG 2 MESTRADO"),
     DebitCategory("PPGGeo", "Mestrado em Geografia", "SEG 2 MESTRADO"),
-    DebitCategory("PPGH", "Mestrado em História", "SEG 2 MESTRADO"),
-    DebitCategory(
-        "PPGDH", "Doutorado em História", "SEG 2 MESTRADO", review_required=True
-    ),
+    DebitCategory("PPGH/PPGDH", "Mestrado e Doutorado em História", "SEG 2 MESTRADO"),
     DebitCategory(
         "PROFIAP",
         "Mestrado Profissional em Administração Pública em Rede Nacional",
@@ -120,6 +121,9 @@ def summarize_trips(trips: Sequence[Viagem]) -> list[TripSummary]:
                 restitution_amount=trip.restituicao_r,
                 reimbursement_amount=trip.reembolso_r,
                 trip_total=trip.total_da_viagem_r,
+                start_date=trip.data_inicio,
+                end_date=trip.data_termino,
+                verified_date=trip.data_da_ultima_verificacao,
             )
         )
 

@@ -38,7 +38,7 @@ class RecalculationTests(unittest.TestCase):
                 ],
                 [156, 244, 200, 400, 644, 52, 312],
             )
-            self.assertEqual(cached["APOIO"]["F3"].value, 600)
+            self.assertEqual(cached["APOIO"]["F3"].value, 1000)
             cached.close()
             workbook = load_workbook(output)
             _check_workbook_structure(workbook)
@@ -46,7 +46,7 @@ class RecalculationTests(unittest.TestCase):
             self.assertEqual(copy(workbook["RESUMO GASTOS"]["B2"].font), font)
             workbook["APOIO"]["D3"] = 500
             workbook["APOIO"]["D21"] = 100
-            workbook["APOIO"]["E21"] = 200
+            workbook["APOIO"]["E21"] = 100
             workbook["APOIO"]["G21"] = 20
             workbook["APOIO"]["H21"] = 10
             workbook.save(output)
@@ -54,7 +54,7 @@ class RecalculationTests(unittest.TestCase):
             recalculate_workbook(output)
             cached = load_workbook(output, data_only=True)
             self.assertEqual(cached["RESUMO GASTOS"]["G8"].value, 344)
-            self.assertEqual(cached["APOIO"]["F3"].value, 500)
+            self.assertEqual(cached["APOIO"]["F3"].value, 1100)
             for coordinate, expected in (
                 ("C28", 1066.6666666666667),
                 ("E28", 433.3333333333333),
@@ -66,3 +66,94 @@ class RecalculationTests(unittest.TestCase):
                     cached["RESUMO GASTOS"][coordinate].value, expected, places=8
                 )
             cached.close()
+
+    def test_cancellations_new_categories_and_manual_groups_recalculate(self):
+        from scdp_automation.xlsx_adjustments import group_formulas
+        from scdp_automation.xlsx_output import build_candidate
+        from tests.test_xlsx_output import make_trip
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reference, output = root / "reference.xlsx", root / "output.xlsx"
+            reference_fixture(reference)
+            import_reference_workbook(reference, output)
+            workbook = load_workbook(output)
+            base, support = workbook["BASE VIAGENS"], workbook["APOIO"]
+            base["C2"] = "Cancelada"
+            workbook.save(output)
+            workbook.close()
+            recalculate_workbook(output)
+            cached = load_workbook(output, data_only=True)
+            self.assertEqual(cached["RESUMO GASTOS"]["F8"].value, "Pendente")
+            self.assertEqual(cached["RESUMO GASTOS"]["G8"].value, "Pendente")
+            cached.close()
+            workbook = load_workbook(output)
+            base, support = workbook["BASE VIAGENS"], workbook["APOIO"]
+            base["Q2"] = "Não"
+            row = support.max_row + 4
+            support.cell(row, 1, "NOVO")
+            support.cell(row, 2, "Nova categoria")
+            support.cell(row, 3, "SEG 1 GRADUAÇÃO")
+            support.cell(row, 4, 10)
+            support.cell(row, 5, 20)
+            support.cell(row, 9, support["I3"].value)
+            row = base.max_row + 4
+            base.cell(row, 1, "111111/26")
+            base.cell(row, 3, "Concluída")
+            base.cell(row, 11, 12)
+            base.cell(row, 16, "NOVO")
+            workbook.save(output)
+            workbook.close()
+            recalculate_workbook(output)
+            cached = load_workbook(output, data_only=True)
+            self.assertEqual(cached["RESUMO GASTOS"]["F8"].value, 12)
+            self.assertEqual(cached["RESUMO GASTOS"]["C8"].value, 1030)
+            cached.close()
+            workbook = load_workbook(output)
+            workbook["BASE VIAGENS"]["Q2"] = "Sim"
+            group_row = workbook["APOIO"].max_row + 3
+            support = workbook["APOIO"]
+            for col, value in (
+                (1, "GRUPO NOVO"),
+                (2, "Grupo novo"),
+                (3, "SEG 1 GRADUAÇÃO"),
+                (4, 100),
+                (5, 200),
+                (7, 0),
+                (9, "Grupo novo"),
+            ):
+                support.cell(group_row, col, value)
+            summary = workbook["RESUMO GASTOS"]
+            summary["B70"] = "Grupo novo"
+            summary["O70"] = "Grupo adicional"
+            for coordinate, formula in group_formulas(70).items():
+                summary[coordinate] = formula
+            before = [
+                (c.coordinate, c.value, c.style_id) for row in summary for c in row
+            ]
+            workbook.save(output)
+            workbook.close()
+            recalculate_workbook(output)
+            cached = load_workbook(output, data_only=True)
+            self.assertEqual(cached["RESUMO GASTOS"]["F8"].value, 168)
+            self.assertEqual(cached["RESUMO GASTOS"]["C70"].value, 300)
+            self.assertEqual(cached["RESUMO GASTOS"]["C64"].value, 0)
+            cached.close()
+            candidate = root / "candidate.xlsx"
+            build_candidate(
+                [
+                    make_trip("999001/26"),
+                    make_trip("999002/26-1C"),
+                    make_trip("111111/26"),
+                ],
+                output,
+                candidate,
+            )
+            workbook = load_workbook(candidate)
+            after = [
+                (c.coordinate, c.value, c.style_id)
+                for row in workbook["RESUMO GASTOS"]
+                for c in row
+            ]
+            self.assertEqual(after, before)
+            workbook.close()

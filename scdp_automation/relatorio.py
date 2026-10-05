@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import unicodedata
+from datetime import date
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -81,6 +82,17 @@ class Viagem(Model):
     reembolso_r: Number
     total_da_viagem_r: Number
     descricao_do_motivo_da_viagem: str | None = None
+    data_da_ultima_verificacao: date | None = None
+
+    @property
+    def data_inicio(self) -> date:
+        return min(date(*map(int, reversed(t.inicio.split("/")))) for t in self.trechos)
+
+    @property
+    def data_termino(self) -> date:
+        return max(
+            date(*map(int, reversed(t.termino.split("/")))) for t in self.trechos
+        )
 
 
 class Cell(TypedDict):

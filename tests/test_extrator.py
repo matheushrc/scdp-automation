@@ -386,7 +386,8 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
             trips, ["--limite", "1"], backup
         )
 
-        workbook_publisher.assert_called_once_with(trips, xlsx_output.DEFAULT_WORKBOOK)
+        self.assertEqual(workbook_publisher.call_count, 2)
+        workbook_publisher.assert_called_with(trips, xlsx_output.DEFAULT_WORKBOOK)
         pending.assert_awaited_once_with(page, trips, [trips[0]], DEFAULT_OUTPUT)
 
     async def test_classification_reminder_has_no_trip_data(self) -> None:
@@ -398,7 +399,8 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
             [trip], [], backup
         )
 
-        workbook_publisher.assert_called_once_with([trip], xlsx_output.DEFAULT_WORKBOOK)
+        self.assertEqual(workbook_publisher.call_count, 2)
+        workbook_publisher.assert_called_with([trip], xlsx_output.DEFAULT_WORKBOOK)
         log_calls = repr(logger_info.call_args_list)
         for secret in secrets:
             self.assertNotIn(secret, log_calls)

@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from copy import copy
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 from zipfile import BadZipFile
 
@@ -57,8 +58,12 @@ BASE_HEADERS = (
     "Restituição (R$)",
     "Reembolso (R$)",
     "Total da viagem (R$)",
+    "Data de início da viagem",
+    "Data de término da viagem",
+    "Data da última verificação",
     "Segmento",
     "Código de débito",
+    "Descontar do curso?",
 )
 
 SUPPORT_HEADERS = (
@@ -141,16 +146,16 @@ def _style_header(worksheet: Worksheet) -> None:
 
 def _segment_formula(row: int, support_last_row: int) -> str:
     return (
-        f'=IF($M{row}="","",IFERROR(INDEX(\'APOIO\'!$C$2:$C${support_last_row},'
-        f"MATCH($M{row},'APOIO'!$A$2:$A${support_last_row},0)),\"\"))"
+        f'=IF($P{row}="","",IFERROR(INDEX(\'APOIO\'!$C$2:$C${support_last_row},'
+        f"MATCH($P{row},'APOIO'!$A$2:$A${support_last_row},0)),\"\"))"
     )
 
 
 def _sumifs_formula(sum_column: str, row: int, *, canceled_only: bool = False) -> str:
     formula = (
         f"=SUMIFS('BASE VIAGENS'!${sum_column}:${sum_column},"
-        f"'BASE VIAGENS'!$L:$L,$A{row},"
-        f"'BASE VIAGENS'!$M:$M,$B{row}"
+        f"'BASE VIAGENS'!$O:$O,$A{row},"
+        f"'BASE VIAGENS'!$P:$P,$B{row}"
     )
     if canceled_only:
         formula += ",'BASE VIAGENS'!$C:$C,\"*Cancel*\""
@@ -162,7 +167,7 @@ def _unclassified_sumifs_formula(
 ) -> str:
     formula = (
         f"=SUMIFS('BASE VIAGENS'!${sum_column}:${sum_column},"
-        "'BASE VIAGENS'!$M:$M,\"\",'BASE VIAGENS'!$A:$A,\"<>\""
+        "'BASE VIAGENS'!$P:$P,\"\",'BASE VIAGENS'!$A:$A,\"<>\""
     )
     if canceled_only:
         formula += ",'BASE VIAGENS'!$C:$C,\"*Cancel*\""
@@ -171,8 +176,8 @@ def _unclassified_sumifs_formula(
 
 def _countifs_formula(row: int) -> str:
     return (
-        f"=COUNTIFS('BASE VIAGENS'!$L:$L,$A{row},"
-        f"'BASE VIAGENS'!$M:$M,$B{row},'BASE VIAGENS'!$A:$A,\"<>\")"
+        f"=COUNTIFS('BASE VIAGENS'!$O:$O,$A{row},"
+        f"'BASE VIAGENS'!$P:$P,$B{row},'BASE VIAGENS'!$A:$A,\"<>\")"
     )
 
 
@@ -248,7 +253,7 @@ def build_summary_formulas(workbook: Workbook) -> None:
     summary.cell(
         row,
         5,
-        "=COUNTIFS('BASE VIAGENS'!$M:$M,\"\",'BASE VIAGENS'!$A:$A,\"<>\")",
+        "=COUNTIFS('BASE VIAGENS'!$P:$P,\"\",'BASE VIAGENS'!$A:$A,\"<>\")",
     )
     summary.cell(row, 6, _unclassified_sumifs_formula("D"))
     summary.cell(row, 7, _unclassified_sumifs_formula("E"))
@@ -305,11 +310,10 @@ def create_workbook_template(path: Path, reference_path: Path | None = None) -> 
     ppghd_row = next(
         row
         for row in range(2, support.max_row + 1)
-        if support.cell(row, 1).value == "PPGDH"
+        if support.cell(row, 1).value == "PPGH/PPGDH"
     )
     support.cell(ppghd_row, 2).comment = Comment(
-        "A planilha de referência apresenta descrições conflitantes para PPGDH. "
-        "Confirme o nome e a alocação antes de preencher.",
+        "Verba compartilhada de Mestrado e Doutorado em História.",
         "SCDP",
     )
 
@@ -331,10 +335,11 @@ def create_workbook_template(path: Path, reference_path: Path | None = None) -> 
         promptTitle="Classificação da PCDP",
         prompt="Escolha o curso, programa ou setor que receberá o débito.",
     )
-    code_validation.add(f"M2:M{_BASE_LAST_ROW}")
+    code_validation.add(f"P2:P{_BASE_LAST_ROW}")
     base.add_data_validation(code_validation)
 
-    base.cell(2, 12, _segment_formula(2, support.max_row))
+    install_base_controls(base)
+    base.cell(2, 15, _segment_formula(2, support.max_row))
     for column, header in enumerate(SUMMARY_HEADERS, start=1):
         summary.cell(1, column, header)
 
@@ -349,7 +354,7 @@ def create_workbook_template(path: Path, reference_path: Path | None = None) -> 
     for row in range(2, support.max_row + 1):
         support.cell(row, 4).number_format = '"R$" #,##0.00;[Red]-"R$" #,##0.00'
 
-    _add_table(base, BASE_TABLE_NAME, "A1:M2")
+    _add_table(base, BASE_TABLE_NAME, "A1:Q2")
     _add_table(support, SUPPORT_TABLE_NAME, f"A1:D{support.max_row}")
     if reference_path is not None or source_path.exists():
         from scdp_automation.xlsx_layout import install_layout
@@ -359,10 +364,48 @@ def create_workbook_template(path: Path, reference_path: Path | None = None) -> 
     else:
         build_summary_formulas(workbook)
 
+    from scdp_automation.xlsx_presentation import format_input_sheets
+
+    format_input_sheets(workbook)
+
     workbook.calculation.calcMode = "auto"
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
     workbook.save(path)
+
+
+def install_base_controls(base: Worksheet) -> None:
+    """Cover future manual rows with choice lists and cancellation highlighting."""
+    from openpyxl.formatting.rule import FormulaRule
+
+    for column, header in enumerate(BASE_HEADERS, 1):
+        base.cell(1, column, header)
+    validations = cast(list[DataValidation], base.data_validations.dataValidation)
+    if not any(v.formula1 == '"Sim,Não"' for v in validations):
+        validation = DataValidation(
+            type="list",
+            formula1='"Sim,Não"',
+            allow_blank=True,
+            showDropDown=False,
+            showErrorMessage=True,
+            errorStyle="stop",
+            errorTitle="Decisão inválida",
+            error="Selecione Sim ou Não.",
+        )
+        validation.add(f"Q2:Q{_BASE_LAST_ROW}")
+        base.add_data_validation(validation)
+    formula = 'AND($C2="Cancelada",$Q2="",$A2<>"")'
+    if not any(
+        formula in (rule.formula or [])
+        for area in base.conditional_formatting
+        for rule in base.conditional_formatting[area]
+    ):
+        base.conditional_formatting.add(
+            f"A2:Q{_BASE_LAST_ROW}",
+            FormulaRule(formula=[formula], fill=PatternFill("solid", fgColor="FFC7CE")),
+        )
+    for column in (14, 15, 16, 17):
+        base.column_dimensions[base.cell(1, column).column_letter].width = 26
 
 
 def _check_workbook_structure(workbook: Workbook) -> None:
@@ -430,7 +473,7 @@ def _check_workbook_structure(workbook: Workbook) -> None:
         for validation in base.data_validations.dataValidation
         if validation.type == "list" and validation.formula1 == f"={CODE_LIST_NAME}"
     ]
-    if len(validations) != 1 or str(validations[0].sqref) != f"M2:M{_BASE_LAST_ROW}":
+    if len(validations) != 1 or str(validations[0].sqref) != f"P2:P{_BASE_LAST_ROW}":
         raise WorkbookValidationError(
             "A validação de códigos em BASE VIAGENS está ausente."
         )
@@ -471,7 +514,7 @@ def _check_workbook_structure(workbook: Workbook) -> None:
         None,
         "PCDPs sem código de débito",
         "Pendente",
-        "=COUNTIFS('BASE VIAGENS'!$M:$M,\"\",'BASE VIAGENS'!$A:$A,\"<>\")",
+        "=COUNTIFS('BASE VIAGENS'!$P:$P,\"\",'BASE VIAGENS'!$A:$A,\"<>\")",
         _unclassified_sumifs_formula("D"),
         _unclassified_sumifs_formula("E"),
         _unclassified_sumifs_formula("G"),
@@ -505,33 +548,32 @@ def _check_workbook_structure(workbook: Workbook) -> None:
 
 
 def _check_common_structure(workbook: Workbook) -> None:
+    from scdp_automation.xlsx_adjustments import dynamic_range
     from scdp_automation.xlsx_layout import (
         LAYOUT_NAME,
         same_formula,
-        support_limit,
-        support_range,
     )
 
     base = workbook["BASE VIAGENS"]
     support = workbook["APOIO"]
-    if workbook.defined_names[LAYOUT_NAME].attr_text != '"5"':
+    if workbook.defined_names[LAYOUT_NAME].attr_text != '"8"':
         raise WorkbookValidationError("Versão do layout inválida.")
     name = workbook.defined_names.get(CODE_LIST_NAME)
-    limit = support_limit(workbook)
-    if name is None or not same_formula("=" + name.attr_text, "=" + support_range("A")):
+    if name is None or not same_formula(
+        "=" + name.attr_text, "=" + dynamic_range("APOIO", "A")
+    ):
         raise WorkbookValidationError("Lista de códigos de débito ausente.")
     validations = base.data_validations.dataValidation
     if not any(
         v.type == "list"
         and v.formula1 in (f"={CODE_LIST_NAME}", CODE_LIST_NAME)
-        and str(v.sqref) == f"M2:M{_BASE_LAST_ROW}"
+        and str(v.sqref) == f"P2:P{_BASE_LAST_ROW}"
         for v in validations
     ):
         raise WorkbookValidationError("Validação de códigos de débito ausente.")
     if BASE_TABLE_NAME not in base.tables or SUPPORT_TABLE_NAME not in support.tables:
         raise WorkbookValidationError("Tabela necessária ausente.")
-    if support.tables[SUPPORT_TABLE_NAME].ref != f"A1:M{limit}":
-        raise WorkbookValidationError("Tabela APOIO malformada.")
+
     calculation = workbook.calculation
     if (
         calculation is None
@@ -554,7 +596,9 @@ def _summaries(trips: Sequence[Viagem] | Sequence[TripSummary]) -> list[TripSumm
     return result
 
 
-def _load_workbook_for_refresh(path: Path) -> Workbook:
+def _load_workbook_for_refresh(
+    path: Path, reference_path: Path | None = None
+) -> Workbook:
     try:
         workbook = load_workbook(path, data_only=False)
     except (OSError, InvalidFileException, BadZipFile, KeyError, ValueError) as error:
@@ -562,10 +606,15 @@ def _load_workbook_for_refresh(path: Path) -> Workbook:
             f"Não foi possível abrir o workbook existente em {path}."
         ) from error
     try:
+        from scdp_automation.xlsx_adjustments import (
+            install_names,
+            merge_history,
+            migrate_adjustments,
+            reorder_base_columns,
+        )
         from scdp_automation.xlsx_layout import (
             LAYOUT_NAME,
             legacy_validate_layout,
-            prepare_ranges,
             update_display_names,
         )
 
@@ -575,7 +624,30 @@ def _load_workbook_for_refresh(path: Path) -> Workbook:
         ):
             update_display_names(workbook)
             legacy_validate_layout(workbook)
-            prepare_ranges(workbook)
+            workbook.defined_names[LAYOUT_NAME].attr_text = '"5"'
+        if (
+            LAYOUT_NAME in workbook.defined_names
+            and workbook.defined_names[LAYOUT_NAME].attr_text == '"5"'
+        ):
+            from scdp_automation.xlsx_reference import read_reference
+
+            source_path = reference_path or DEFAULT_REFERENCE
+            data = read_reference(source_path) if source_path.exists() else None
+            migrate_adjustments(workbook, data)
+        if LAYOUT_NAME in workbook.defined_names and workbook.defined_names[
+            LAYOUT_NAME
+        ].attr_text in ('"6"', '"7"'):
+            reorder_base_columns(workbook)
+            merge_history(workbook)
+            install_names(workbook)
+            workbook.defined_names[LAYOUT_NAME].attr_text = '"8"'
+        if (
+            LAYOUT_NAME not in workbook.defined_names
+            and "BASE VIAGENS" in workbook.sheetnames
+            and tuple(c.value for c in workbook["BASE VIAGENS"][1])
+            == (*BASE_HEADERS[:11], "Segmento", "Código de débito")
+        ):
+            reorder_base_columns(workbook)
         if LAYOUT_NAME in workbook.defined_names and workbook.calculation is not None:
             if workbook.calculation.calcMode is None:
                 workbook.calculation.calcMode = "auto"
@@ -592,14 +664,14 @@ def _load_workbook_for_refresh(path: Path) -> Workbook:
                     )
                 )
                 covers_base = any(
-                    area.min_col == area.max_col == 13
+                    area.min_col == area.max_col == 16
                     and area.min_row == 2
                     and area.max_row >= base.max_row
                     for area in validation.sqref.ranges
                 )
                 if matches_code_list and covers_base:
                     validation.formula1 = f"={CODE_LIST_NAME}"
-                    validation.sqref = f"M2:M{_BASE_LAST_ROW}"
+                    validation.sqref = f"P2:P{_BASE_LAST_ROW}"
         _check_workbook_structure(workbook)
     except Exception:
         workbook.close()
@@ -611,6 +683,7 @@ def _write_base_rows(
     workbook: Workbook,
     summaries: Sequence[TripSummary],
     manual_codes: dict[str, str],
+    manual_decisions: dict[str, str | None] | None = None,
 ) -> None:
     base = workbook["BASE VIAGENS"]
     support_last_row = workbook["APOIO"].max_row
@@ -621,6 +694,10 @@ def _write_base_rows(
     )
 
     ranged = LAYOUT_NAME in workbook.defined_names
+    previous_dates = {
+        base.cell(r, 1).value: tuple(base.cell(r, c).value for c in (12, 13, 14))
+        for r in range(2, base.max_row + 1)
+    }
     old_last_row = max(base.max_row, 2)
     target_last_row = max(2, len(summaries) + 1)
     style_source = [copy(cell._style) for cell in base[2]]
@@ -657,20 +734,35 @@ def _write_base_rows(
             )
 
         for column, value in enumerate(values, start=1):
-            base.cell(row, column, value)
+            base.cell(row, column).value = value
         base.cell(
             row,
-            12,
+            15,
             range_segment_formula(row, support_limit(workbook))
             if ranged
             else _segment_formula(row, support_last_row),
         )
-        base.cell(row, 13).value = manual_codes.get(pcdp)
+        base.cell(row, 16).value = manual_codes.get(pcdp)
+        base.cell(row, 17).value = (manual_decisions or {}).get(pcdp)
+        dates = (
+            (summary.start_date, summary.end_date, summary.verified_date)
+            if index < len(summaries)
+            else (None, None, None)
+        )
+        old_dates = previous_dates.get(pcdp, (None, None, None))
+        dates = tuple(new or old for new, old in zip(dates, old_dates, strict=True))
+        for column, value in enumerate(dates, 12):
+            base.cell(row, column).value = value
+            base.cell(row, column).number_format = "dd/mm/yyyy"
         base.cell(row, 4).number_format = "0.0"
         for column in range(5, 12):
             base.cell(row, column).number_format = '"R$" #,##0.00;[Red]-"R$" #,##0.00'
 
-    base.tables[BASE_TABLE_NAME].ref = f"A1:M{target_last_row}"
+    base.tables[BASE_TABLE_NAME].ref = f"A1:Q{target_last_row}"
+    base.tables[BASE_TABLE_NAME].tableColumns = []
+    from scdp_automation.xlsx_presentation import format_base_sheet
+
+    format_base_sheet(base)
 
 
 def build_candidate(
@@ -693,10 +785,11 @@ def build_candidate(
     summaries = _summaries(trips)
     incoming_pcdps = {summary.pcdp for summary in summaries}
     manual_codes: dict[str, str] = {}
+    manual_decisions: dict[str, str | None] = {}
     workbook: Workbook
 
     if current_path.exists():
-        workbook = _load_workbook_for_refresh(current_path)
+        workbook = _load_workbook_for_refresh(current_path, reference_path)
         base = workbook["BASE VIAGENS"]
         support = workbook["APOIO"]
         support_codes = {
@@ -715,7 +808,12 @@ def build_candidate(
                     "A base publicada contém PCDPs inválidas ou duplicadas."
                 )
             existing_pcdps.add(pcdp)
-            code = base.cell(row, 13).value
+            decision = base.cell(row, 17).value
+            if decision not in (None, "", "Sim", "Não"):
+                workbook.close()
+                raise WorkbookValidationError("Decisão de desconto inválida na base.")
+            manual_decisions[pcdp] = decision or None
+            code = base.cell(row, 16).value
             if code in (None, ""):
                 continue
             if not isinstance(code, str) or code not in support_codes:
@@ -755,10 +853,13 @@ def build_candidate(
                 if value is not None:
                     workbook["APOIO"].cell(row, 4, value)
             manual_codes = data.codes | manual_codes
+            manual_decisions = data.decisions | manual_decisions
         elif not current_path.exists() and source_path.exists():
-            manual_codes = read_reference(source_path).codes
+            data = read_reference(source_path)
+            manual_codes = data.codes
+            manual_decisions = dict(data.decisions)
         candidate_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_base_rows(workbook, summaries, manual_codes)
+        _write_base_rows(workbook, summaries, manual_codes, manual_decisions)
         workbook.save(candidate_path)
     except Exception:
         workbook.close()
@@ -792,12 +893,12 @@ def _validate_candidate(
                     "O candidato contém PCDPs inválidas ou duplicadas."
                 )
             actual_pcdps.append(pcdp)
-            code = base.cell(row, 13).value
+            code = base.cell(row, 16).value
             if code not in (None, "") and code not in support_codes:
                 raise WorkbookValidationError(
                     "O candidato contém código de débito desconhecido."
                 )
-            segment_formula = base.cell(row, 12).value
+            segment_formula = base.cell(row, 15).value
             from scdp_automation.xlsx_layout import (
                 LAYOUT_NAME,
                 range_segment_formula,

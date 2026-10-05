@@ -15,6 +15,7 @@ from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.cell_range import CellRange
 from openpyxl.worksheet.worksheet import Worksheet
 
+from scdp_automation.xlsx_adjustments import total_formula
 from scdp_automation.xlsx_models import DEBIT_CATEGORIES
 from scdp_automation.xlsx_reference import ReferenceData
 
@@ -24,8 +25,8 @@ INPUT_HEADERS = (
     "Nome por extenso",
     "Segmento",
     "Diárias e passagens distribuído (R$)",
-    "Recurso total (R$)",
     "Transportes distribuído (R$)",
+    "Recurso total (R$)",
     "Transportes agendado (R$)",
     "Transportes pago (R$)",
     "Grupo no resumo",
@@ -153,13 +154,13 @@ def install_layout(
         values = (
             (
                 inputs.daily,
-                inputs.total,
-                transport_formula(row),
+                inputs.transport,
+                total_formula(row),
                 inputs.scheduled,
                 inputs.paid,
             )
             if inputs
-            else (None, None, transport_formula(row), None, None)
+            else (None, None, total_formula(row), None, None)
         )
         for col, value in enumerate(values, 4):
             support.cell(row, col).value = value
@@ -191,12 +192,6 @@ def install_layout(
         summary.cell(row, 2, text)
     for col in range(2, 14):
         _copy_cell(summary.cell(6, col), summary.cell(61, col))
-    ppghd_row = next(
-        row
-        for row in range(2, support.max_row + 1)
-        if support.cell(row, 1).value == "PPGDH"
-    )
-    support.cell(ppghd_row, 9).value = summary["B62"].value
     for col in (2, 3, 5, 6, 7, 9, 10, 11, 13):
         _copy_cell(summary.cell(45, col), summary.cell(68, col))
     summary["B68"] = "TOTAL CONSOLIDADO"
@@ -205,6 +200,9 @@ def install_layout(
     summary["C65"].number_format = "0"
     workbook.defined_names.add(DefinedName(LAYOUT_NAME, attr_text='"3"'))
     update_display_names(workbook)
+    from scdp_automation.xlsx_adjustments import merge_history
+
+    merge_history(workbook)
     prepare_ranges(workbook)
     workbook.active = 2
 
@@ -299,7 +297,13 @@ def legacy_validate_layout(workbook: Workbook) -> None:
 
     support = workbook["APOIO"]
     if (
-        tuple(c.value for c in support[1]) != INPUT_HEADERS
+        tuple(c.value for c in support[1])
+        != (
+            *INPUT_HEADERS[:4],
+            "Recurso total (R$)",
+            "Transportes distribuído (R$)",
+            *INPUT_HEADERS[6:],
+        )
         or support.max_row != len(DEBIT_CATEGORIES) + 1
     ):
         raise WorkbookValidationError(
@@ -392,7 +396,7 @@ def same_formula(actual: object, expected: str) -> bool:
 
 
 def support_range(column: str) -> str:
-    return f"OFFSET('APOIO'!${column}$1,1,0,MAX(1,'RESUMO GASTOS'!$R$1),1)"
+    return "Apoio" + column
 
 
 def support_limit(workbook: Workbook) -> int:
@@ -400,21 +404,25 @@ def support_limit(workbook: Workbook) -> int:
 
 
 def base_range(column: str) -> str:
-    return f"OFFSET('BASE VIAGENS'!${column}$1,1,0,MAX(1,'RESUMO GASTOS'!$R$2),1)"
+    return "Viagens" + column
 
 
 def support_expense_formula(row: int) -> str:
-    return f'=IF(A{row}="","",SUMIFS({base_range("K")},{base_range("M")},A{row},{base_range("L")},C{row}))'
+    from scdp_automation.xlsx_adjustments import expense_formula
+
+    return expense_formula(row)
 
 
 def range_segment_formula(row: int, limit: int | None = None) -> str:
-    lookup = "OFFSET('APOIO'!$A$1,1,0,MAX(1,'RESUMO GASTOS'!$R$1),3)"
-    return f"""=IF($M{row}="","",IFERROR(VLOOKUP($M{row},{lookup},3,FALSE),""))"""
+    return f'=IF($P{row}="","",IFERROR(VLOOKUP($P{row},ApoioCatalogo,3,FALSE),""))'
 
 
 def prepare_ranges(workbook: Workbook) -> None:
     """Use OFFSET ranges ending at the last populated debit or PCDP."""
+    from scdp_automation.xlsx_adjustments import dynamic_range, install_names
     from scdp_automation.xlsx_output import CODE_LIST_NAME
+
+    install_names(workbook)
 
     support = workbook["APOIO"]
     support.cell(1, 13, "Total utilizado por categoria (R$)")
@@ -430,7 +438,7 @@ def prepare_ranges(workbook: Workbook) -> None:
     if support.max_row > last_row:
         support.delete_rows(last_row + 1, support.max_row - last_row)
     for row in range(2, last_row + 1):
-        support.cell(row, 6).value = transport_formula(row)
+        support.cell(row, 6).value = total_formula(row)
         support.cell(row, 13).value = support_expense_formula(row)
         for col in (4, 5, 6, 7, 8, 13):
             support.cell(row, col).number_format = '"R$" #,##0.00;[Red]-"R$" #,##0.00'
@@ -439,7 +447,7 @@ def prepare_ranges(workbook: Workbook) -> None:
     table.ref = f"A1:M{last_row}"
     table.tableColumns = []
     workbook.defined_names.add(
-        DefinedName(CODE_LIST_NAME, attr_text=support_range("A"))
+        DefinedName(CODE_LIST_NAME, attr_text=dynamic_range("APOIO", "A"))
     )
     summary = workbook["RESUMO GASTOS"]
     for col in range(2, 14):
@@ -448,191 +456,70 @@ def prepare_ranges(workbook: Workbook) -> None:
     summary["B64"] = "Categorias sem grupo reconhecido"
     for row in range(1, 69):
         summary.cell(row, 15).value = (
-            "Subtotal principal" if row in (22, 36, 41, 43) else None
+            "Grupo principal"
+            if row in MAIN_ROWS
+            else "Grupo adicional"
+            if row == 63
+            else None
         )
     summary.column_dimensions["O"].hidden = True
     summary.column_dimensions["P"].hidden = True
     summary.column_dimensions["R"].hidden = True
     for row in range(2, workbook["BASE VIAGENS"].max_row + 1):
-        workbook["BASE VIAGENS"].cell(row, 12).value = range_segment_formula(row)
+        workbook["BASE VIAGENS"].cell(row, 15).value = range_segment_formula(row)
     for coordinate, formula in summary_formulas(workbook).items():
         summary[coordinate] = formula
-    workbook.defined_names.add(DefinedName(LAYOUT_NAME, attr_text='"5"'))
+    workbook.defined_names.add(DefinedName(LAYOUT_NAME, attr_text='"8"'))
 
 
 def summary_formulas(workbook: Workbook) -> dict[str, str]:
-    """Aggregate support ranges by group instead of enumerating their cells."""
+    """Group categories dynamically, including manually appended debit codes."""
+    from scdp_automation.xlsx_adjustments import charged_for_codes, group_formulas
 
-    def apoio(column: str) -> str:
-        return support_range(column)
-
-    groups = apoio("I")
-    codes = apoio("A")
     formulas = {}
-    rate_code = '"PPGEL +"'
-    formulas["R1"] = (
-        """=MAX(1,IFERROR(LOOKUP(2,1/('APOIO'!$A:$A<>""),ROW('APOIO'!$A:$A))-1,1))"""
-    )
-    formulas["R2"] = (
-        """=MAX(1,IFERROR(LOOKUP(2,1/('BASE VIAGENS'!$A:$A<>""),ROW('BASE VIAGENS'!$A:$A))-1,1))"""
-    )
-    for row in (*MAIN_ROWS, *EXTRA_ROWS):
-        formulas[f"P{row}"] = f"=B{row}"
-    for row in (*MAIN_ROWS, *EXTRA_ROWS):
-        criterion = f"$B{row}"
-        for output, source in (("C", "E"), ("E", "D"), ("I", "F"), ("J", "G")):
-            amounts = apoio(source)
-            count = f"SUMPRODUCT(--({groups}={criterion}),--ISNUMBER({amounts}))"
-            summed = f"SUMIF({groups},{criterion},{amounts})"
-            if row in (27, 28, 32):
-                weight_col = {27: "J", 28: "K", 32: "L"}[row]
-                weights = apoio(weight_col)
-                summed += f"+SUMPRODUCT(--({codes}={rate_code}),{amounts},{weights})"
-                count += f"+SUMPRODUCT(--({codes}={rate_code}),--ISNUMBER({amounts}),--({weights}>0))"
-            formulas[f"{output}{row}"] = f'=IF({count}=0,"Pendente",{summed})'
-        formulas[f"F{row}"] = f"=SUMIF({groups},{criterion},{apoio('M')})"
-        if row in (27, 28, 32):
-            weight_col = {27: "J", 28: "K", 32: "L"}[row]
-            formulas[f"F{row}"] += (
-                f"+SUMPRODUCT(--({codes}={rate_code}),{apoio('M')},{apoio(weight_col)})"
-            )
-        formulas[f"G{row}"] = f'=IF(ISNUMBER(E{row}),E{row}-F{row},"Pendente")'
-        formulas[f"K{row}"] = (
-            f'=IF(AND(ISNUMBER(I{row}),ISNUMBER(J{row})),I{row}-J{row},"Pendente")'
-        )
-        formulas[f"M{row}"] = (
-            f'=IF(AND(ISNUMBER(G{row}),ISNUMBER(K{row})),G{row}+K{row},"Pendente")'
+    for row in (*MAIN_ROWS, 63):
+        formulas.update(
+            group_formulas(row, weight_column={27: "J", 28: "K", 32: "L"}.get(row))
         )
     for row, start, end in ((22, 7, 21), (36, 26, 35)):
         for col in ("C", "E", "F", "G", "I", "J", "K", "M"):
             formulas[f"{col}{row}"] = (
                 f'=IF(COUNT({col}{start}:{col}{end})={end - start + 1},SUM({col}{start}:{col}{end}),"Pendente")'
             )
-    # SUMIF over a row-kind range avoids adding individual subtotal cells.
     for col in ("C", "E", "F", "G", "I", "J", "K", "M"):
-        amounts = f"{col}7:{col}43"
+        amounts = "Resumo" + col
         formulas[f"{col}45"] = (
-            f'=IF(COUNTIFS($O$7:$O$43,"Subtotal principal",{amounts},"Pendente")>0,"Pendente",SUMIF($O$7:$O$43,"Subtotal principal",{amounts}))'
+            f'=IF(COUNTIFS(ResumoO,"Grupo principal",{amounts},"Pendente")>0,"Pendente",SUMIF(ResumoO,"Grupo principal",{amounts}))'
         )
     for row, code in enumerate(DETAIL_CODES, 50):
-        formulas[f"C{row}"] = f'=SUMIF({codes},"{code}",{apoio("M")})'
-    formulas["C58"] = "=SUM(C50:C57)"
-    formulas["C65"] = f'=COUNTIFS({base_range("M")},"",{base_range("A")},"<>")'
+        pending = f'COUNTIFS(ViagensM,"{code}",ViagensC,"Cancelada",ViagensN,"")'
+        formulas[f"C{row}"] = (
+            f'=IF({pending}>0,"Pendente",{charged_for_codes(chr(34) + code + chr(34))})'
+        )
+    formulas["C58"] = '=IF(COUNT(C50:C57)=8,SUM(C50:C57),"Pendente")'
+    formulas["C65"] = '=COUNTIFS(ViagensM,"",ViagensA,"<>")'
     formulas["F66"] = (
-        f'=SUMIFS({base_range("K")},{base_range("M")},"",{base_range("A")},"<>")'
+        f'=IF(COUNTIFS(ViagensM,"",ViagensC,"Cancelada",ViagensN,"")>0,"Pendente",{charged_for_codes(chr(34) + chr(34))})'
     )
     for col in ("C", "E", "I", "J", "G", "K", "M"):
         formulas[f"{col}66"] = '=IF(C65=0,0,"Pendente")'
-    formulas["F68"] = f"=SUM({base_range('K')})"
-    formulas["F64"] = "=F68-SUM(F45,F62:F63,F66)"
-    # Unmapped groups remain visible, including budgets without expenses.
-    unknown = f'SUMPRODUCT(--({codes}<>""),--({codes}<>{rate_code}),--ISNA(MATCH({groups},$P$7:$P$63,0)))'
+    formulas["F68"] = (
+        '=IF(COUNTIFS(ViagensC,"Cancelada",ViagensN,"",ViagensA,"<>")>0,"Pendente",SUMIFS(ViagensK,ViagensC,"<>Cancelada")+SUMIFS(ViagensK,ViagensC,"Cancelada",ViagensN,"Sim"))'
+    )
+    formulas["F64"] = (
+        '=IF(AND(ISNUMBER(F68),ISNUMBER(F45),ISNUMBER(F63),ISNUMBER(F66)),F68-SUM(F45,F63,F66),"Pendente")'
+    )
+    unknown = 'SUMPRODUCT(--(ApoioA<>""),--(ApoioA<>"PPGEL +"),--ISNA(MATCH(ApoioI,ResumoP,0)))'
     for col in ("C", "E", "I", "J", "G", "K", "M"):
         formulas[f"{col}64"] = f'=IF({unknown}=0,0,"Pendente")'
+        amounts = "Resumo" + col
         formulas[f"{col}68"] = (
-            f'=IF(COUNT({col}45,{col}62:{col}64,{col}66)=5,SUM({col}45,{col}62:{col}64,{col}66),"Pendente")'
+            f'=IF(OR(COUNTIFS(ResumoO,"Grupo principal",{amounts},"Pendente")>0,COUNTIFS(ResumoO,"Grupo adicional",{amounts},"Pendente")>0,COUNT({col}64,{col}66)<>2),"Pendente",SUMIF(ResumoO,"Grupo principal",{amounts})+SUMIF(ResumoO,"Grupo adicional",{amounts})+SUM({col}64,{col}66))'
         )
     return formulas
 
 
 def validate_layout(workbook: Workbook) -> None:
-    from scdp_automation.xlsx_output import WorkbookValidationError
+    from scdp_automation.xlsx_adjustments import validate_editable_layout
 
-    support = workbook["APOIO"]
-    expected_headers = (*INPUT_HEADERS, "Total utilizado por categoria (R$)")
-    if tuple(c.value for c in support[1]) != expected_headers:
-        raise WorkbookValidationError("As colunas de APOIO foram alteradas.")
-    expected = {category.code: category for category in DEBIT_CATEGORIES}
-    seen = set()
-    allowed_segments = {category.segment for category in DEBIT_CATEGORIES}
-    for row in range(2, support.max_row + 1):
-        code = support.cell(row, 1).value
-        if not code:
-            if any(
-                support.cell(row, col).value is not None
-                for col in (2, 3, 4, 5, 7, 8, 9, 10, 11, 12)
-            ):
-                raise WorkbookValidationError(
-                    "Preencha o código da categoria em APOIO."
-                )
-            continue
-        if (
-            not isinstance(code, str)
-            or code != code.strip()
-            or code in seen
-            or any(c in code for c in "*?~")
-        ):
-            raise WorkbookValidationError("Código inválido ou duplicado em APOIO.")
-        seen.add(code)
-        if (
-            not isinstance(support.cell(row, 2).value, str)
-            or support.cell(row, 3).value not in allowed_segments
-        ):
-            raise WorkbookValidationError("Nome ou segmento inválido em APOIO.")
-        if code in expected and (
-            support.cell(row, 2).value,
-            support.cell(row, 3).value,
-        ) != (expected[code].name, expected[code].segment):
-            raise WorkbookValidationError(
-                "O catálogo de débitos em APOIO foi alterado."
-            )
-        for col in (4, 5, 7, 8):
-            value = support.cell(row, col).value
-            if value is not None and (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-            ):
-                raise WorkbookValidationError(
-                    "Orçamento e transporte em APOIO precisam de valor numérico."
-                )
-        if support.cell(row, 6).value != transport_formula(row) or support.cell(
-            row, 13
-        ).value != support_expense_formula(row):
-            raise WorkbookValidationError("Uma fórmula de APOIO foi alterada.")
-        weights = [support.cell(row, col).value for col in (10, 11, 12)]
-        if code != "PPGEL +":
-            if any(w is not None for w in weights):
-                raise WorkbookValidationError(
-                    "Rateio informado em categoria não habilitada."
-                )
-        else:
-            required = any(support.cell(row, col).value for col in (4, 5, 7, 8)) or any(
-                workbook["BASE VIAGENS"].cell(r, 13).value == code
-                and workbook["BASE VIAGENS"].cell(r, 11).value
-                for r in range(2, workbook["BASE VIAGENS"].max_row + 1)
-            )
-            if (required or any(w is not None for w in weights)) and (
-                any(
-                    isinstance(w, bool)
-                    or not isinstance(w, (int, float))
-                    or not math.isfinite(w)
-                    or not 0 <= w <= 1
-                    for w in weights
-                )
-                or not math.isclose(sum(weights), 1, abs_tol=1e-10)
-            ):
-                raise WorkbookValidationError(
-                    "O rateio PPGEL + precisa totalizar 100%."
-                )
-    if not set(expected).issubset(seen):
-        raise WorkbookValidationError("O catálogo de débitos em APOIO está incompleto.")
-    formulas = summary_formulas(workbook)
-    summary = workbook["RESUMO GASTOS"]
-    if any(
-        summary.cell(row, 15).value
-        != ("Subtotal principal" if row in (22, 36, 41, 43) else None)
-        for row in range(1, 69)
-    ):
-        raise WorkbookValidationError("A identificação dos subtotais foi alterada.")
-    for coordinate, formula in formulas.items():
-        if not same_formula(summary[coordinate].value, formula):
-            raise WorkbookValidationError(
-                "Uma fórmula de RESUMO GASTOS foi alterada ou está ausente."
-            )
-    for row in summary:
-        for cell in row:
-            if cell.data_type == "f" and cell.coordinate not in formulas:
-                raise WorkbookValidationError(
-                    "Uma fórmula desconhecida foi inserida no resumo."
-                )
+    validate_editable_layout(workbook)

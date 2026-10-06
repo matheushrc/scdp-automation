@@ -366,6 +366,7 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=trips),
             ),
             patch("scdp_automation.extrator.save_json"),
+            patch("scdp_automation.extrator.OutputHistory") as history_factory,
             patch("scdp_automation.extrator.publish_workbook", new=workbook_publisher),
             patch(
                 "scdp_automation.extrator.collect_pending_descriptions",
@@ -373,6 +374,7 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch("scdp_automation.extrator.logger.info", new=logger_info),
         ):
+            history_factory.return_value.archive_previous.return_value = backup_path
             await run(args)
 
         return page, workbook_publisher, pending_descriptions, logger_info
@@ -390,7 +392,9 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(workbook_publisher.call_count, 2)
-        workbook_publisher.assert_called_with(trips, xlsx_output.DEFAULT_WORKBOOK)
+        workbook_publisher.assert_called_with(
+            trips, xlsx_output.DEFAULT_WORKBOOK, create_backup=False
+        )
         pending.assert_awaited_once_with(page, trips, [trips[0]], DEFAULT_OUTPUT)
 
     async def test_classification_reminder_has_no_trip_data(self) -> None:
@@ -403,7 +407,9 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(workbook_publisher.call_count, 2)
-        workbook_publisher.assert_called_with([trip], xlsx_output.DEFAULT_WORKBOOK)
+        workbook_publisher.assert_called_with(
+            [trip], xlsx_output.DEFAULT_WORKBOOK, create_backup=False
+        )
         log_calls = repr(logger_info.call_args_list)
         for secret in secrets:
             self.assertNotIn(secret, log_calls)

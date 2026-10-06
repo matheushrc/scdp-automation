@@ -1,8 +1,10 @@
 import tempfile
 import unittest
 from copy import copy
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
 
@@ -21,6 +23,26 @@ class FidelityTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.reference = self.root / "reference.xlsx"
         reference_fixture(self.reference)
+
+    def test_publication_records_the_value_update_date_in_m2(self):
+        template = self.root / "template.xlsx"
+        xlsx_output.import_reference_workbook(self.reference, template)
+        output = self.root / "fresh.xlsx"
+        updated_at = datetime(2026, 10, 7, 1, 30, tzinfo=ZoneInfo("America/Sao_Paulo"))
+        with (
+            patch.object(xlsx_output, "DEFAULT_REFERENCE", template),
+            patch("scdp_automation.xlsx_output.datetime") as clock,
+        ):
+            clock.now.return_value = updated_at
+            xlsx_output.build_candidate(
+                [make_trip("888888/26")], self.root / "missing.xlsx", output
+            )
+        clock.now.assert_called_once_with(ZoneInfo("America/Sao_Paulo"))
+        workbook = load_workbook(output)
+        self.addCleanup(workbook.close)
+        cell = workbook["RESUMO GASTOS"]["M2"]
+        self.assertEqual(cell.value.date(), date(2026, 10, 7))
+        self.assertEqual(cell.number_format, "dd/mm/yyyy")
 
     def test_fresh_extraction_preserves_template_sheets_without_old_trips(self):
         template = self.root / "template.xlsx"

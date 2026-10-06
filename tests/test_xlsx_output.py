@@ -865,7 +865,9 @@ class WorkbookPublicationTests(unittest.TestCase):
 
         with TemporaryDirectory() as directory:
             path = Path(directory) / "gastos.xlsx"
-            lock = FileLock(f"{path}.lock", timeout=0.1)
+            from scdp_automation.xlsx_output import _workbook_lock_path
+
+            lock = FileLock(_workbook_lock_path(path), timeout=0.1)
             with (
                 lock,
                 patch("scdp_automation.xlsx_output.FILELOCK_TIMEOUT", 0.01),

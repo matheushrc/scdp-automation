@@ -140,7 +140,7 @@ A extração usa a planilha existente para atualizar `BASE VIAGENS`, preservando
 
 Se a planilha não existir, o sistema cria uma nova. Quando disponível, a referência `input/gastos_scdp_template.xlsx` fornece o layout ajustado e os preenchimentos iniciais de APOIO e RESUMO GASTOS; o arquivo de referência é somente lido. Essa referência é uma cópia da planilha de saída com BASE VIAGENS vazia, preparada para servir como ponto de partida. Mantenha a planilha ajustada no caminho de saída para que ela seja usada nas próximas atualizações.
 
-Antes de substituir uma planilha existente, o sistema valida a atualização e cria um backup com data e hora em `output/`. Se a nova listagem não contiver alguma PCDP já publicada, a atualização é interrompida para permitir a conferência, preservando a planilha anterior.
+A raiz de `output/` contém a planilha e o JSON atuais. Cada execução arquiva o par anterior uma única vez em `output/backup/`, com data e hora no nome. Após a publicação bem-sucedida, mantém os quatro pares anteriores, totalizando cinco execuções incluindo a atual. A célula `RESUMO GASTOS!M2` recebe a data da atualização dos valores, no fuso de São Paulo. Antes de substituir a planilha, o sistema valida a atualização. Se a nova listagem não contiver alguma PCDP já publicada, a atualização é interrompida para permitir a conferência, preservando a planilha anterior.
 
 ## Desenvolvimento
 

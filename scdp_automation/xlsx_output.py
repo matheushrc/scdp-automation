@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import shutil
+import tempfile
 from collections.abc import Sequence
 from copy import copy
 from datetime import UTC, datetime
@@ -12,6 +14,7 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 from zipfile import BadZipFile
+from zoneinfo import ZoneInfo
 
 from filelock import FileLock, Timeout
 from openpyxl import Workbook, load_workbook
@@ -1009,6 +1012,10 @@ def build_candidate(
             manual_decisions = dict(data.decisions)
         candidate_path.parent.mkdir(parents=True, exist_ok=True)
         _write_base_rows(workbook, summaries, manual_codes, manual_decisions)
+        if LAYOUT_NAME in workbook.defined_names:
+            updated_cell = workbook["RESUMO GASTOS"]["M2"]
+            updated_cell.value = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+            updated_cell.number_format = "dd/mm/yyyy"
         workbook.save(candidate_path)
     except Exception:
         workbook.close()
@@ -1109,16 +1116,23 @@ def _backup_path_for(workbook_path: Path) -> Path:
     return backup
 
 
+def _workbook_lock_path(workbook_path: Path) -> str:
+    identifier = hashlib.sha256(str(workbook_path.resolve()).encode()).hexdigest()
+    return str(Path(tempfile.gettempdir()) / f"scdp-workbook-{identifier}.lock")
+
+
 def publish_workbook(
     trips: Sequence[Viagem] | Sequence[TripSummary],
     workbook_path: Path = DEFAULT_WORKBOOK,
     *,
     reference_path: Path | None = None,
     recalculate: bool = False,
+    create_backup: bool = True,
 ) -> Path | None:
     """Serialize refreshes, validate a neighboring candidate, then replace atomically."""
     workbook_path.parent.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(f"{workbook_path}.lock", timeout=FILELOCK_TIMEOUT)
+    lock_path = _workbook_lock_path(workbook_path)
+    lock = FileLock(lock_path, timeout=FILELOCK_TIMEOUT)
     try:
         with lock:
             candidate = _candidate_path_for(workbook_path)
@@ -1137,7 +1151,7 @@ def publish_workbook(
                     recalculate_workbook(candidate)
                     _validate_candidate(candidate, trips)
                 backup: Path | None = None
-                if workbook_path.exists():
+                if create_backup and workbook_path.exists():
                     backup = _backup_path_for(workbook_path)
                     try:
                         shutil.copy2(workbook_path, backup)

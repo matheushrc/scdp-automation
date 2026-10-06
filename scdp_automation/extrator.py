@@ -20,6 +20,7 @@ from scdp_automation.chrome_profile_setup import selected_profile_directory
 from scdp_automation.config import REPO_ROOT, current_year, sync_extraction_config
 from scdp_automation.logging_config import configure_logging
 from scdp_automation.navegador_chrome import connect_visible_chrome
+from scdp_automation.output_history import OutputHistory
 from scdp_automation.relatorio import Viagem, load_trips, parse_report_rows, save_json
 from scdp_automation.xlsx_output import DEFAULT_WORKBOOK, publish_workbook
 
@@ -375,10 +376,17 @@ def save_checkpoint_and_publish(
     trips: list[Viagem],
     checkpoint_path: Path,
     workbook_path: Path = DEFAULT_WORKBOOK,
+    *,
+    history: OutputHistory | None = None,
 ) -> Path | None:
     """Persist the complete JSON checkpoint before refreshing the workbook."""
+    backup = history.archive_previous() if history is not None else None
     save_json(checkpoint_path, trips)
-    return publish_workbook(trips, workbook_path)
+    if history is None:
+        return publish_workbook(trips, workbook_path)
+    publish_workbook(trips, workbook_path, create_backup=False)
+    history.prune()
+    return backup
 
 
 async def run(argv: list[str] | None = None) -> None:
@@ -386,6 +394,7 @@ async def run(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     output = args.output
     workbook_path = args.workbook
+    history = OutputHistory(output, workbook_path)
     previous = {v.numero_da_solicitacao: v for v in load_trips(output)}
 
     async with async_playwright() as playwright:
@@ -435,7 +444,9 @@ async def run(argv: list[str] | None = None) -> None:
             if old is not None:
                 trip.descricao_do_motivo_da_viagem = old.descricao_do_motivo_da_viagem
                 trip.data_da_ultima_verificacao = old.data_da_ultima_verificacao
-        backup = save_checkpoint_and_publish(trips, output, workbook_path)
+        backup = save_checkpoint_and_publish(
+            trips, output, workbook_path, history=history
+        )
         logger.info("Workbook de gastos atualizado em {}.", workbook_path.resolve())
         if backup is None:
             logger.info("Nenhum backup anterior existia para o workbook.")
@@ -458,7 +469,7 @@ async def run(argv: list[str] | None = None) -> None:
             len(pending),
         )
         await collect_pending_descriptions(page, trips, pending, output)
-        save_checkpoint_and_publish(trips, output, workbook_path)
+        save_checkpoint_and_publish(trips, output, workbook_path, history=history)
         remaining = sum(v.descricao_do_motivo_da_viagem is None for v in trips)
         logger.info("JSON atualizado em {}.", output.resolve())
         logger.info("Descrições pendentes: {}.", remaining)

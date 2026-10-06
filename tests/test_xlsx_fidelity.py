@@ -19,6 +19,55 @@ class FidelityTests(unittest.TestCase):
         self.reference = self.root / "reference.xlsx"
         reference_fixture(self.reference)
 
+    def test_fresh_extraction_preserves_template_sheets_without_old_trips(self):
+        template = self.root / "template.xlsx"
+        xlsx_output.import_reference_workbook(self.reference, template)
+        before = template.read_bytes()
+        output = self.root / "fresh.xlsx"
+        with patch.object(xlsx_output, "DEFAULT_REFERENCE", template):
+            xlsx_output.publish_workbook([make_trip("888888/26")], output)
+
+        self.assertEqual(template.read_bytes(), before)
+        workbook = load_workbook(output)
+        source = load_workbook(template)
+        self.addCleanup(workbook.close)
+        self.addCleanup(source.close)
+        self.assertEqual(workbook["BASE VIAGENS"]["A2"].value, "888888/26")
+        self.assertEqual(workbook["BASE VIAGENS"].max_row, 2)
+        self.assertIsNone(workbook["BASE VIAGENS"]["Q2"].value)
+        for name in ("APOIO", "RESUMO GASTOS"):
+            actual, expected = workbook[name], source[name]
+            self.assertEqual(actual.max_row, expected.max_row)
+            self.assertEqual(actual.max_column, expected.max_column)
+            self.assertEqual(
+                set(map(str, actual.merged_cells)), set(map(str, expected.merged_cells))
+            )
+            for row in expected:
+                for cell in row:
+                    copied = actual[cell.coordinate]
+                    self.assertEqual(
+                        copied.value, cell.value, f"{name}!{cell.coordinate}"
+                    )
+                    self.assertEqual(
+                        copied._style, cell._style, f"{name}!{cell.coordinate}"
+                    )
+
+    def test_fresh_extraction_does_not_reuse_matching_template_trip_metadata(self):
+        template = self.root / "template.xlsx"
+        xlsx_output.import_reference_workbook(self.reference, template)
+        workbook = load_workbook(template)
+        workbook["BASE VIAGENS"]["O2"] = "Old template description"
+        workbook["BASE VIAGENS"]["N2"] = "Old verification"
+        workbook.save(template)
+        workbook.close()
+        output = self.root / "fresh.xlsx"
+        with patch.object(xlsx_output, "DEFAULT_REFERENCE", template):
+            xlsx_output.publish_workbook([make_trip("999001/26")], output)
+        workbook = load_workbook(output)
+        self.addCleanup(workbook.close)
+        for column in ("N", "O", "Q", "R"):
+            self.assertIsNone(workbook["BASE VIAGENS"][f"{column}2"].value)
+
     def test_import_fills_all_three_sheets_and_preserves_original_presentation(self):
         path = self.root / "rebuilt.xlsx"
         before = self.reference.read_bytes()

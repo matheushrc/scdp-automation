@@ -629,11 +629,12 @@ class WorkbookRefreshTests(unittest.TestCase):
 
             self.assertEqual(reference.read_bytes(), original_bytes)
             self.assertFalse(current.exists())
+            self.assertEqual(read_base_rows(template), {})
+            rows = read_base_rows(candidate)
+            self.assertIsNone(rows[trip.numero_da_solicitacao][16])
             for path in (template, candidate):
-                rows = read_base_rows(path)
-                self.assertEqual(rows[trip.numero_da_solicitacao][16], "AGRONOMIA")
                 workbook = load_workbook(path)
-                self.assertEqual(workbook["BASE VIAGENS"].cell(2, 18).value, "Sim")
+                self.assertIsNone(workbook["BASE VIAGENS"].cell(2, 18).value)
                 self.assertEqual(workbook["APOIO"].cell(2, 4).value, 4321)
                 workbook.close()
 

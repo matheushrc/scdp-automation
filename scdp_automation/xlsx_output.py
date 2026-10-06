@@ -313,6 +313,7 @@ def create_workbook_template(path: Path, reference_path: Path | None = None) -> 
     if _is_current_reference(source_path):
         workbook = _load_workbook_for_refresh(source_path)
         try:
+            _write_base_rows(workbook, [], {})
             workbook.save(path)
         finally:
             workbook.close()
@@ -886,10 +887,6 @@ def build_candidate(
         )
 
     source_path = reference_path or DEFAULT_REFERENCE
-    if not current_path.exists() and _is_current_reference(source_path):
-        build_candidate(trips, source_path, candidate_path, reference_path=source_path)
-        return
-
     summaries = _summaries(trips)
     incoming_pcdps = {summary.pcdp for summary in summaries}
     manual_codes: dict[str, str] = {}
@@ -966,7 +963,11 @@ def build_candidate(
                     workbook["APOIO"].cell(row, 4, value)
             manual_codes = data.codes | manual_codes
             manual_decisions = data.decisions | manual_decisions
-        elif not current_path.exists() and source_path.exists():
+        elif (
+            not current_path.exists()
+            and source_path.exists()
+            and not _is_current_reference(source_path)
+        ):
             data = read_reference(source_path)
             manual_codes = data.codes
             manual_decisions = dict(data.decisions)

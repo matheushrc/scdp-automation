@@ -19,6 +19,7 @@ from scdp_automation.chrome_profile_setup import (
     selected_profile_directory,
     write_profile_config,
 )
+from tests.support.chrome_profiles import InteractiveStream, create_user_data
 
 
 class WindowsProfileCopyTests(unittest.TestCase):
@@ -103,33 +104,6 @@ class WindowsProfileCopyTests(unittest.TestCase):
             finally:
                 shutil.rmtree(_filesystem_path(source), ignore_errors=True)
                 shutil.rmtree(_filesystem_path(destination), ignore_errors=True)
-
-
-class InteractiveStream(io.StringIO):
-    def isatty(self) -> bool:
-        return True
-
-
-def create_user_data(user_data_dir: Path) -> None:
-    for directory in ("Default", "Profile 2"):
-        profile = user_data_dir / directory
-        profile.mkdir(parents=True)
-        (profile / "Preferences").write_text(directory, encoding="utf-8")
-    extension_path = user_data_dir / "Profile 2" / "Extensions"
-    extension_path.mkdir()
-    (extension_path / "payload").write_text("extension", encoding="utf-8")
-    state = {
-        "os_crypt": {"encrypted_key": "synthetic"},
-        "profile": {
-            "info_cache": {
-                "Default": {"name": "Default", "user_name": ""},
-                "Profile 2": {"name": "Work", "user_name": "chief@example.com"},
-            },
-            "last_active_profiles": ["Default", "Profile 2"],
-            "last_used": "Default",
-        },
-    }
-    (user_data_dir / "Local State").write_text(json.dumps(state), encoding="utf-8")
 
 
 class ProfileConfigTests(unittest.TestCase):

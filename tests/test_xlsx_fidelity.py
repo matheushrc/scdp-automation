@@ -7,8 +7,11 @@ from unittest.mock import patch
 from openpyxl import load_workbook
 
 from scdp_automation import xlsx_output
-from tests.test_xlsx_output import make_trip
-from tests.xlsx_fixtures import reference_fixture
+from tests.support.workbooks import (
+    make_trip,
+    reference_fixture,
+    write_existing_workbook,
+)
 
 
 class FidelityTests(unittest.TestCase):
@@ -67,6 +70,61 @@ class FidelityTests(unittest.TestCase):
         self.addCleanup(workbook.close)
         for column in ("N", "O", "Q", "R"):
             self.assertIsNone(workbook["BASE VIAGENS"][f"{column}2"].value)
+
+    def test_existing_generic_workbook_adopts_template_sheets_and_keeps_inputs(self):
+        template = self.root / "template.xlsx"
+        xlsx_output.import_reference_workbook(self.reference, template)
+        current = self.root / "generic.xlsx"
+        candidate = self.root / "candidate.xlsx"
+        trip = make_trip("888888/26")
+        with patch.object(xlsx_output, "DEFAULT_REFERENCE", self.root / "missing.xlsx"):
+            write_existing_workbook(
+                current, [trip], {trip.numero_da_solicitacao: "AGRONOMIA"}
+            )
+        workbook = load_workbook(current)
+        workbook["BASE VIAGENS"]["O2"] = "Operator description"
+        workbook["BASE VIAGENS"]["R2"] = "Sim"
+        allocation_row = next(
+            r
+            for r in range(2, workbook["APOIO"].max_row + 1)
+            if workbook["APOIO"].cell(r, 1).value == "AGRONOMIA"
+        )
+        workbook["APOIO"].cell(allocation_row, 4, 12345)
+        workbook.save(current)
+        workbook.close()
+        original = current.read_bytes()
+        template_before = template.read_bytes()
+        with patch.object(xlsx_output, "DEFAULT_REFERENCE", template):
+            xlsx_output.build_candidate([trip], current, candidate)
+        self.assertEqual(current.read_bytes(), original)
+        self.assertEqual(template.read_bytes(), template_before)
+        workbook = load_workbook(candidate)
+        source = load_workbook(template)
+        self.addCleanup(workbook.close)
+        self.addCleanup(source.close)
+        self.assertEqual(workbook["BASE VIAGENS"]["A2"].value, "888888/26")
+        self.assertEqual(workbook["BASE VIAGENS"]["O2"].value, "Operator description")
+        self.assertEqual(workbook["BASE VIAGENS"]["Q2"].value, "AGRONOMIA")
+        self.assertEqual(workbook["BASE VIAGENS"]["R2"].value, "Sim")
+        self.assertEqual(workbook["APOIO"].cell(allocation_row, 4).value, 12345)
+        for name in ("APOIO", "RESUMO GASTOS"):
+            self.assertEqual(workbook[name].max_column, source[name].max_column)
+            self.assertEqual(
+                set(map(str, workbook[name].merged_cells)),
+                set(map(str, source[name].merged_cells)),
+            )
+            for row in source[name]:
+                for cell in row:
+                    copied = workbook[name][cell.coordinate]
+                    if not (
+                        name == "APOIO" and cell.coordinate == f"D{allocation_row}"
+                    ):
+                        self.assertEqual(
+                            copied.value, cell.value, f"{name}!{cell.coordinate}"
+                        )
+                    self.assertEqual(
+                        copied._style, cell._style, f"{name}!{cell.coordinate}"
+                    )
 
     def test_import_fills_all_three_sheets_and_preserves_original_presentation(self):
         path = self.root / "rebuilt.xlsx"

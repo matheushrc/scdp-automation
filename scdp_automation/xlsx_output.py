@@ -869,6 +869,34 @@ def _write_base_rows(
     format_base_sheet(base)
 
 
+def _adopt_template_sheets(workbook: Workbook, source_path: Path) -> Workbook:
+    """Use the template workbook while retaining existing travel and budget inputs."""
+    previous_rows = list(
+        workbook["BASE VIAGENS"].iter_rows(min_row=2, values_only=True)
+    )
+    allocations = {
+        row[0]: row[3]
+        for row in workbook["APOIO"].iter_rows(min_row=2, max_col=4, values_only=True)
+        if row[0] and row[3] is not None
+    }
+    replacement = _load_workbook_for_refresh(source_path)
+    try:
+        _write_base_rows(replacement, [], {})
+        base = replacement["BASE VIAGENS"]
+        for index, values in enumerate(previous_rows, 2):
+            for column, value in enumerate(values, 1):
+                base.cell(index, column).value = value
+        support = replacement["APOIO"]
+        for row in range(2, support.max_row + 1):
+            code = support.cell(row, 1).value
+            if code in allocations:
+                support.cell(row, 4).value = allocations[code]
+    except Exception:
+        replacement.close()
+        raise
+    return replacement
+
+
 def build_candidate(
     trips: Sequence[Viagem] | Sequence[TripSummary],
     current_path: Path,
@@ -946,6 +974,14 @@ def build_candidate(
         from scdp_automation.xlsx_reference import read_reference
 
         source_path = reference_path or DEFAULT_REFERENCE
+        if (
+            current_path.exists()
+            and LAYOUT_NAME not in workbook.defined_names
+            and _is_current_reference(source_path)
+        ):
+            replacement = _adopt_template_sheets(workbook, source_path)
+            workbook.close()
+            workbook = replacement
         if (
             LAYOUT_NAME not in workbook.defined_names
             and source_path.exists()

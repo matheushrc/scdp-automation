@@ -12,7 +12,7 @@ from scdp_automation.xlsx_output import (
     install_decision_highlighting,
 )
 from scdp_automation.xlsx_recalculate import recalculate_workbook
-from tests.xlsx_fixtures import reference_fixture
+from tests.support.workbooks import reference_fixture
 
 
 @unittest.skipUnless(shutil.which("libreoffice"), "LibreOffice necessário")

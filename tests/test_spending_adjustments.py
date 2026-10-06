@@ -9,8 +9,11 @@ from openpyxl import load_workbook
 
 from scdp_automation import extrator, xlsx_output
 from scdp_automation.xlsx_models import summarize_trips
-from tests.test_xlsx_output import make_trip
-from tests.xlsx_fixtures import reference_fixture, restore_legacy_group_layout
+from tests.support.workbooks import (
+    make_trip,
+    reference_fixture,
+    restore_legacy_group_layout,
+)
 
 
 class DateTests(unittest.IsolatedAsyncioTestCase):

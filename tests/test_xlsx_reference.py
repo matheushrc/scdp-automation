@@ -5,7 +5,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from scdp_automation.xlsx_reference import read_reference
-from tests.xlsx_fixtures import reference_fixture
+from tests.support.workbooks import reference_fixture
 
 
 class ReferenceTests(unittest.TestCase):

@@ -8,7 +8,7 @@ from openpyxl.formula.translate import Translator
 
 from scdp_automation.xlsx_output import import_reference_workbook
 from scdp_automation.xlsx_recalculate import recalculate_workbook
-from tests.xlsx_fixtures import reference_fixture
+from tests.support.workbooks import reference_fixture
 
 
 @unittest.skipUnless(shutil.which("libreoffice"), "LibreOffice necessário")
@@ -139,7 +139,7 @@ class CodeSummaryTests(unittest.TestCase):
     def test_migration_preserves_manual_formulas_and_support_references(self):
         from scdp_automation.xlsx_output import build_candidate
         from scdp_automation.xlsx_reference import read_reference
-        from tests.xlsx_fixtures import restore_legacy_group_layout
+        from tests.support.workbooks import restore_legacy_group_layout
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -237,7 +237,7 @@ class CodeSummaryTests(unittest.TestCase):
     def test_migration_rejects_unsupported_references_without_changing_source(self):
         from scdp_automation.xlsx_output import build_candidate
         from scdp_automation.xlsx_reference import read_reference
-        from tests.xlsx_fixtures import restore_legacy_group_layout
+        from tests.support.workbooks import restore_legacy_group_layout
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

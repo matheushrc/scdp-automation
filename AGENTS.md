@@ -7,6 +7,15 @@
 - Keep the project Chrome clone free of extensions; extensions can interfere with gov.br login controls.
 - Use `uv run python -m scdp_automation --login` to authenticate without starting extraction.
 - Do not commit credentials, browser profiles, generated results, or private travel inputs. Review changes under `input/` carefully.
+- Never commit diagnostic scripts, one-off probes, or their output. Keep local diagnostics in `.local-diagnostics/` or outside the repository, and review the staged diff before committing.
+
+## Test helpers
+
+- Put shared test builders and fixtures in `tests/support/`, grouped by domain. Helpers used by only one test module may stay local to that module.
+- Tests must import production code directly from `scdp_automation`; do not route imports through CLI wrappers or `scripts/`.
+- Do not import helpers from `test_*.py` modules. Use explicit absolute imports from `tests.support` and helper filenames without the `test` prefix.
+- Use `git mv` when relocating tracked files and update their imports and callers.
+- Create synthetic test data in temporary directories and register cleanup with a context manager or `addCleanup()`. Do not use private `input/` files as fixtures.
 
 ## Development and validation
 

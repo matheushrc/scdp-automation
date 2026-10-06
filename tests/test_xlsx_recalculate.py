@@ -11,7 +11,7 @@ from scdp_automation.xlsx_output import (
     import_reference_workbook,
 )
 from scdp_automation.xlsx_recalculate import recalculate_workbook
-from tests.xlsx_fixtures import reference_fixture
+from tests.support.workbooks import reference_fixture
 
 
 @unittest.skipUnless(shutil.which("libreoffice"), "LibreOffice unavailable")
@@ -70,7 +70,7 @@ class RecalculationTests(unittest.TestCase):
     def test_cancellations_new_categories_and_manual_groups_recalculate(self):
         from scdp_automation.xlsx_code_summary import code_group_formulas
         from scdp_automation.xlsx_output import build_candidate
-        from tests.test_xlsx_output import make_trip
+        from tests.support.workbooks import make_trip
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

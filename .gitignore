@@ -16,6 +16,8 @@ wheels/
 /input/
 /output/
 /logs/
+/.local-diagnostics/
+/diagnostico-*.txt
 /.scdp-browser*
 /.scdp-config.toml
 *.csv

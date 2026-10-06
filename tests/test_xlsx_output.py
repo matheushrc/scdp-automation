@@ -1,5 +1,4 @@
 import unittest
-from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 from datetime import date
@@ -11,7 +10,6 @@ from scdp_automation import xlsx_output
 from scdp_automation.config import current_year
 from scdp_automation.relatorio import Viagem
 from scdp_automation.xlsx_output import (
-    BASE_HEADERS,
     DEBIT_CATEGORIES,
     DebitCategory,
     TripSummary,
@@ -21,6 +19,7 @@ from scdp_automation.xlsx_output import (
     publish_workbook,
     summarize_trips,
 )
+from tests.support.workbooks import make_trip, read_base_rows, write_existing_workbook
 
 _reference_patch = patch.object(
     xlsx_output,
@@ -35,60 +34,6 @@ def setUpModule() -> None:
 
 def tearDownModule() -> None:
     _reference_patch.stop()
-
-
-def make_trip(pcdp: str = "123456/26-2B") -> Viagem:
-    """Create a validated trip whose itinerary differs from its totals."""
-    return Viagem.model_validate(
-        {
-            "numero_da_solicitacao": pcdp,
-            "nome_do_proposto": "Pessoa Exemplo",
-            "orgao_solicitante": "ORG-TESTE",
-            "orgao_superior": "ORG-SUPERIOR-TESTE",
-            "tipo_da_viagem": "NACIONAL",
-            "situacao_da_viagem": "Autorizada",
-            "motivo_viagem": "Nacional - A Serviço",
-            "trechos": [
-                {
-                    "inicio": "01/03/2026",
-                    "termino": "03/03/2026",
-                    "origem": "Cidade Alfa (AA)",
-                    "destino": "Cidade Beta (BB)",
-                    "meio_de_transporte": "Aéreo",
-                    "quantidade_diarias": 2.0,
-                    "diarias_r": 700.25,
-                    "passagens_e_taxas_iniciais_r": 800.50,
-                    "total_r": 1500.75,
-                },
-                {
-                    "inicio": "03/03/2026",
-                    "termino": "05/03/2026",
-                    "origem": "Cidade Beta (BB)",
-                    "destino": "Cidade Alfa (AA)",
-                    "meio_de_transporte": "Aéreo",
-                    "quantidade_diarias": 3.0,
-                    "diarias_r": 900.75,
-                    "passagens_e_taxas_iniciais_r": 1000.25,
-                    "total_r": 1901.00,
-                },
-            ],
-            "custo_com_bilhetes_remarcados_nao_utilizados_cancelados_r": {
-                "passagens_e_taxas_iniciais_r": 2.0,
-                "total_r": 2.0,
-            },
-            "sub_total": {
-                "quantidade_diarias": 8.5,
-                "diarias_r": 1234.56,
-                "passagens_e_taxas_iniciais_r": 789.01,
-                "total_r": 2023.57,
-            },
-            "total_adicional_r": 33.05,
-            "descontos_r": 4.01,
-            "restituicao_r": 5.02,
-            "reembolso_r": 6.03,
-            "total_da_viagem_r": 2063.66,
-        }
-    )
 
 
 class TripSummaryTests(unittest.TestCase):
@@ -475,72 +420,6 @@ class WorkbookTemplateTests(unittest.TestCase):
         self.assertNotIn("+L", summary.cell(active_row, 17).value)
 
 
-def write_existing_workbook(
-    path: Path,
-    trips: list[Viagem],
-    codes: dict[str, str] | None = None,
-    allocations: Mapping[str, object] | None = None,
-) -> None:
-    from openpyxl import load_workbook
-    from openpyxl.formula.translate import Translator
-
-    create_workbook_template(path)
-    workbook = load_workbook(path, data_only=False)
-    base = workbook["BASE VIAGENS"]
-    codes = codes or {}
-    allocations = allocations or {}
-
-    for row, summary in enumerate(summarize_trips(trips), start=2):
-        if row > 2:
-            for column in range(1, len(BASE_HEADERS) + 1):
-                base.cell(row, column)._style = base.cell(2, column)._style
-        values = (
-            summary.pcdp,
-            summary.proposed,
-            summary.status,
-            summary.daily_count,
-            summary.daily_amount,
-            summary.ticket_amount,
-            summary.additional_amount,
-            summary.discount_amount,
-            summary.restitution_amount,
-            summary.reimbursement_amount,
-            summary.trip_total,
-        )
-        for column, value in enumerate(values, start=1):
-            base.cell(row, column, value)
-        base.cell(
-            row,
-            16,
-            Translator(base["P2"].value, origin="P2").translate_formula(f"P{row}"),
-        )
-        base.cell(row, 17, codes.get(summary.pcdp))
-
-    base.tables["tblBaseViagens"].ref = f"A1:R{max(2, len(trips) + 1)}"
-    support = workbook["APOIO"]
-    for row in range(2, support.max_row + 1):
-        code = support.cell(row, 1).value
-        if code in allocations:
-            support.cell(row, 4, allocations[code])
-    workbook.save(path)
-
-
-def read_base_rows(path: Path) -> dict[str, tuple[object, ...]]:
-    from openpyxl import load_workbook
-
-    workbook = load_workbook(path, data_only=False)
-    base = workbook["BASE VIAGENS"]
-    rows = {
-        base.cell(row, 1).value: tuple(
-            base.cell(row, column).value for column in range(1, 19)
-        )
-        for row in range(2, base.max_row + 1)
-        if base.cell(row, 1).value
-    }
-    workbook.close()
-    return rows
-
-
 class WorkbookRefreshTests(unittest.TestCase):
     def test_description_migration_preserves_codes_decisions_and_reference_formulas(
         self,
@@ -548,7 +427,7 @@ class WorkbookRefreshTests(unittest.TestCase):
         from openpyxl import load_workbook
         from openpyxl.workbook.defined_name import DefinedName
 
-        from tests.xlsx_fixtures import restore_base_without_description
+        from tests.support.workbooks import restore_base_without_description
 
         trip = make_trip()
         trip.descricao_do_motivo_da_viagem = "Descrição já extraída."

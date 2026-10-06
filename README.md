@@ -1,172 +1,150 @@
 # SCDP
 
-Extrator do relatório **Relatórios > Viagem** do SCDP. A automação usa a janela visível do Google Chrome e mantém a autenticação gov.br e o CAPTCHA sob controle do operador.
+Sistema para extrair o relatório **Relatórios > Viagem** do SCDP e atualizar a planilha de gastos. A automação usa uma janela visível do Google Chrome; o operador resolve o CAPTCHA e outros desafios de autenticação.
 
-## Preparar e executar
+## Preparação
 
-Instale as dependências do projeto:
+Instale o [uv](https://docs.astral.sh/uv/) e o Google Chrome. Execute os comandos na raiz do projeto. O projeto requer Python 3.14.5 ou superior, dentro da série 3.14.
+
+Instale as dependências:
 
 ```sh
 uv sync
 ```
 
-Crie `.env` a partir do exemplo e restrinja as permissões do arquivo:
+Crie o arquivo de credenciais a partir do exemplo. Em Linux, restrinja as permissões do arquivo:
 
 ```sh
 cp .env.example .env
 chmod 600 .env
 ```
 
-Configure as credenciais gov.br em `.env`, que é ignorado pelo Git:
+Preencha o CPF e a senha do gov.br em `.env`:
 
 ```dotenv
 USERNAME=seu-cpf
 PASSWORD=sua-senha
 ```
 
-Na primeira execução, o terminal lista os perfis Chrome encontrados para o
-usuário atual. Use as setas e Enter para escolher; Escape cancela. O nome e o
-e-mail exibidos vêm dos metadados locais do Chrome, e o e-mail fica vazio quando
-o perfil não tem um associado. O script copia o perfil escolhido para
-`.scdp-browser/` sem extensões e grava o caminho de origem e o e-mail em
-`.scdp-config.toml`, ignorados pelo Git. Essa configuração local não substitui
-as credenciais de `.env`.
+As variáveis `USERNAME` e `PASSWORD` do ambiente também são aceitas quando a respectiva chave não estiver presente em `.env`.
 
-Feche todas as janelas do Chrome antes da primeira cópia ou de trocar o perfil
-salvo. Para trocar o perfil, execute:
+Na primeira execução, escolha um perfil do Chrome com as setas e Enter; Escape cancela. Feche todas as janelas do Chrome para permitir a cópia do perfil. O sistema cria uma cópia local sem extensões em `.scdp-browser/` e salva a seleção em `.scdp-config.toml`. Nas próximas execuções, essa cópia é reutilizada.
 
-```sh
-uv run python -m scdp_automation --selecionar-perfil-chrome
-```
+## Comandos da CLI
 
-Também é possível combinar essa opção com `--login` ou `--abrir-navegador`.
-Nas execuções seguintes, o clone local é reutilizado.
-
-O extrator preenche o CPF na página gov.br, aguarda você resolver o CAPTCHA
-na janela visível, preenche a senha e envia o formulário. Também é possível
-definir `USERNAME` e `PASSWORD` no ambiente como fallback quando as respectivas
-chaves não estiverem presentes no `.env`.
-
-Para abrir apenas o Chrome visível com o perfil local do projeto:
-
-```sh
-uv run python -m scdp_automation --abrir-navegador
-```
-
-Para executar a coleta, em outro terminal na raiz do projeto:
+### Extrair viagens e atualizar a planilha
 
 ```sh
 uv run python -m scdp_automation
 ```
 
-Para autenticar sem iniciar a coleta, execute:
+O comando abre ou conecta ao Chrome local, aguarda a autenticação e consulta **RELATÓRIOS > Viagem** para CCH — Campus Chapecó/SC, código `121766`, com a opção **Todas as viagens do ano de exercício**. Se necessário, o sistema clica em **Entrar com gov.br** e preenche as credenciais. Resolva os desafios de autenticação na janela visível e mantenha o Chrome aberto durante a coleta.
 
-```sh
-uv run python -m scdp_automation --login
-```
+A execução salva a listagem completa, atualiza a planilha, consulta os motivos das solicitações que precisam de verificação e atualiza a planilha novamente ao terminar.
 
-Esse comando para após voltar ao SCDP autenticado. Ele não abre relatórios nem
-cria ou atualiza o JSON de viagens.
-
-Se for solicitado, o extrator clica em **Entrar com gov.br**. O CPF e a senha vêm da configuração local; resolva o CAPTCHA manualmente na janela visível. O extrator aguarda o retorno ao SCDP autenticado e a aparição do menu **RELATÓRIOS**. Em seguida, abre **RELATÓRIOS > Viagem**, confirma CCH — Campus Chapecó/SC (código `121766`), marca **Todas as viagens do ano de exercício** e pesquisa. Mantenha a janela do Chrome aberta enquanto a coleta estiver em execução.
-
-## Saída e retomada
-
-O resultado e checkpoint ficam em `output/viagens_scdp_2026.json`. O arquivo contém as solicitações, os trechos e os totais visíveis no relatório, mais `descricao_do_motivo_da_viagem`, consultada na tela **Situação da Solicitação**. Campos usam snake case, valores monetários e quantidade de diárias são números float, e todas as viagens são validadas com Pydantic.
-
-Primeiro o script percorre todas as páginas do relatório e grava os dados. Depois consulta as descrições pendentes, atualizando o JSON atomicamente depois de cada uma. Uma descrição `null` indica que ainda não foi consultada; uma string vazia indica que o campo foi consultado e estava vazio. Em nova execução, descrições já concluídas são reutilizadas e as pendentes são retomadas. Para limitar a quantidade consultada em uma execução:
+### Limitar as consultas individuais
 
 ```sh
 uv run python -m scdp_automation --limite 2
 ```
 
-O limite afeta somente a consulta opcional das descrições. A listagem anual
-completa é sempre salva no JSON e publicada em `output/gastos_scdp_2026.xlsx`.
-Esse workbook tem três worksheets:
+O limite afeta somente a quantidade de solicitações consultadas individualmente para obter o motivo da viagem. A listagem anual completa continua sendo coletada e publicada. Use `--limite 0`, ou omita a opção, para consultar todas as solicitações que precisam de verificação.
 
-- `BASE VIAGENS` contém uma linha por PCDP. A coluna final `Código de débito` é
-  recuperada da original na importação inicial e preservada pela PCDP completa.
-  Viagens novas sem classificação conhecida são preenchidas manualmente;
-  `Segmento` é obtido pelo código escolhido.
-- `APOIO` contém o código, nome e segmento de cada curso, programa ou setor.
-  Os campos de entrada são diárias e passagens distribuído, recurso total,
-  transportes agendado e transportes pago. A distribuição de transportes é
-  calculada como recurso total menos a distribuição de diárias e passagens.
-  Valores existentes são importados da original; campos realmente ausentes
-  ficam pendentes. Não repita o orçamento do grupo nas subcategorias.
-  `PPGEL +` mantém o rateio da original entre PPGE, PPGEL e PPGH nas três
-  colunas de percentual; os percentuais devem somar 100%.
-- `RESUMO GASTOS` preserva o quadro visual da original: graduação,
-  pós-graduação, administrativo, transportes e saldos. Os gastos são agrupados
-  por segmento e código, com suplementos e detalhamentos no grupo correto.
-  `Utilizado` de transportes corresponde ao agendado, como na fórmula original;
-  o valor pago permanece disponível em APOIO. O Excel recalcula as fórmulas
-  quando o workbook é aberto. Categorias adicionais e pendências ficam abaixo
-  do quadro original e entram no total consolidado.
+### Autenticar sem extrair dados
 
-### Inclusão de categorias em APOIO
+```sh
+uv run python -m scdp_automation --login
+```
 
-Use a próxima linha vazia da tabela de `APOIO`. Preencha código único, nome,
-segmento e `Grupo no resumo`. O grupo deve ter o mesmo nome de uma linha do
-resumo; assim, a categoria entra nas somas existentes sem editar fórmulas.
-Preencha os valores de orçamento e transporte que forem conhecidos.
+O comando termina depois de retornar ao SCDP autenticado. Ele não consulta relatórios nem atualiza o JSON ou a planilha.
 
-As colunas F (transportes distribuído) e M (total utilizado por categoria)
-são calculadas. As colunas J:L são exclusivas do rateio `PPGEL +`.
-Os gastos entram ao classificar as viagens em `BASE VIAGENS` com o novo código.
-Categorias com grupos inexistentes aparecem como pendência no resumo; os gastos
-continuam no total consolidado. Criar uma linha própria para um novo grupo no
-quadro visual ainda exige ajustar esse quadro.
+### Abrir somente o navegador
 
-As buscas usam `VLOOKUP` (`PROCV`) com correspondência exata. Os agrupamentos
-usam `SUMIF`, `SUMIFS`, `SUMPRODUCT`, `COUNTIFS` e `ISNUMBER` sobre intervalos,
-sem `XLOOKUP`, matrizes dinâmicas ou referências estruturadas nas fórmulas.
-O Excel antigo com essas funções e o Google Sheets oferecem as funções usadas;
-a importação do arquivo específico no Sheets ainda deve ser conferida.
-Os intervalos de APOIO e BASE VIAGENS usam `OFFSET` (`DESLOC`) até a
-última categoria ou viagem preenchida, sem reservar 1.000 ou 10.000 linhas.
-A identificação da última linha considera espaços vazios no meio dos dados.
-RESUMO GASTOS soma esses intervalos dinâmicos.
+```sh
+uv run python -m scdp_automation --abrir-navegador
+```
 
-Ao inserir uma linha em APOIO ou BASE VIAGENS, copie uma linha existente para
-preservar as fórmulas das colunas calculadas e preencha os dados novos.
-`OFFSET` amplia os intervalos de consulta e soma; o preenchimento das fórmulas
-da nova linha depende dessa cópia ou do preenchimento automático da tabela.
+Mantenha esse comando em execução enquanto usar a janela. Para iniciar a extração usando o mesmo navegador, execute o comando de coleta em outro terminal.
 
-Fontes: [SUMIFS no LibreOffice](https://help.libreoffice.org/latest/en-US/text/scalc/01/func_sumifs.html),
-[VLOOKUP no Google Sheets](https://support.google.com/docs/answer/3093318?hl=en).
+### Trocar o perfil do Chrome
 
-O gerador existente publica em `output/gastos_scdp_2026.xlsx`, substituindo a
-planilha anterior com backup. A criação e atualização usam o formato original
-no mesmo fluxo de extração. A referência é somente lida; não é alterada.
+```sh
+uv run python -m scdp_automation --selecionar-perfil-chrome --login
+```
 
-Duplicidades equivalentes são consolidadas por PCDP; classificações e valores
-conflitantes impedem a importação. Um workbook anterior no formato genérico é
-migrado na atualização quando a referência está disponível, preservando códigos
-e alocações manuais. A reconstrução usa o conjunto da original; a extração
-posterior pode conter viagens diferentes e exigir reconciliação.
+Feche todas as janelas do Chrome para permitir a cópia do perfil escolhido. A opção `--selecionar-perfil-chrome` pode ser combinada com `--login` ou `--abrir-navegador`; usada sozinha, seleciona o perfil e inicia a extração.
 
-Na primeira publicação, o arquivo é criado sem backup. Atualizações seguintes
-criam um backup com data e hora antes de substituir o workbook. Os códigos
-manuais continuam vinculados à PCDP completa e as alocações de `APOIO` são
-preservadas entre as atualizações.
+### Consultar a ajuda
 
-## Logs
+```sh
+uv run python -m scdp_automation --help
+```
 
-O Loguru grava mensagens operacionais no terminal e em `logs/scdp/`. Os arquivos giram diariamente e são mantidos por 30 dias. Os logs não registram conteúdo de formulários, credenciais, cookies, corpos de requisição/resposta ou identificadores de viagem.
+Após instalar as dependências, também é possível usar `uv run scdp-extrair` no lugar de `uv run python -m scdp_automation`, com as mesmas opções.
+
+## Resultados e retomada
+
+- `output/viagens_scdp_2026.json`: viagens, trechos, valores, descrição do motivo e data da última verificação.
+- `output/gastos_scdp_2026.xlsx`: planilha de gastos com as abas `BASE VIAGENS`, `APOIO` e `RESUMO GASTOS`.
+- `logs/scdp/`: registros de execução, com rotação diária e retenção de 30 dias.
+
+O JSON é salvo depois da coleta da listagem e após cada consulta individual concluída. Se a execução for interrompida, execute novamente para aproveitar o progresso salvo. A descrição `null` indica uma consulta ainda não concluída; uma descrição vazia indica que o campo foi consultado e estava vazio.
+
+Uma solicitação é consultada individualmente quando a viagem começa depois de hoje, quando falta a descrição ou quando falta a data da última verificação. Viagens cujo início já ocorreu, inclusive hoje, deixam de ser consultadas individualmente quando a descrição e a data da verificação estão salvas. A data considerada é a de início, e a comparação usa o fuso de São Paulo. A listagem geral continua sendo atualizada em todas as execuções.
+
+## Uso da planilha
+
+Abra `output/gastos_scdp_2026.xlsx` para conferir e preencher os dados. As fórmulas são configuradas para recalcular ao abrir o arquivo no Excel. Feche a planilha antes de executar a extração para permitir a substituição do arquivo.
+
+### BASE VIAGENS
+
+Cada linha representa uma PCDP. Confira os valores extraídos e use as últimas três colunas:
+
+- `Segmento`: calculado a partir do código de débito cadastrado em `APOIO`.
+- `Código de débito`: escolha a categoria responsável pela despesa na lista suspensa.
+- `Descontar do curso?`: para viagens canceladas, selecione `Sim` para incluir o valor nos gastos ou `Não` para excluí-lo. Para as demais situações, o gasto é incluído independentemente dessa escolha.
+
+Uma viagem cancelada sem decisão em `Descontar do curso?` deixa os cálculos correspondentes como `Pendente` e destaca a linha em vermelho. Uma linha com PCDP preenchida e segmento vazio fica amarela; se as duas condições ocorrerem, prevalece o vermelho.
+
+As colunas de início da viagem, término da viagem e última verificação ficam ocultas. As demais colunas usam texto ajustado à largura e alinhamento centralizado.
+
+### APOIO
+
+Cadastre os códigos de débito, os nomes e os segmentos das categorias. `PPGH/PPGDH` é um único código para Mestrado e Doutorado em História.
+
+Preencha os valores conhecidos nas colunas `Diárias e passagens distribuído (R$)`, `Transportes distribuído (R$)`, `Transportes agendado (R$)` e `Transportes pago (R$)`. Informe `0` quando o valor for conhecido e igual a zero; deixe vazio apenas o que ainda não foi informado. O recurso total, na coluna F, é calculado pela soma das duas distribuições. O total utilizado por categoria, na coluna L, também é calculado.
+
+As colunas I a K contêm o rateio de `PPGEL +` entre PPGE, PPGEL e História. Preencha percentuais que somem 100% quando essa categoria tiver valores ou gastos. Não repita o orçamento de uma categoria principal nas suas subcategorias.
+
+Para incluir uma categoria, copie uma linha existente da tabela, mantenha as fórmulas e preencha um código único, nome, segmento e os valores disponíveis. Depois, classifique as viagens com esse código em `BASE VIAGENS`.
+
+### RESUMO GASTOS
+
+Confira os recursos distribuídos, os gastos, os transportes e os saldos por categoria. O utilizado de transportes corresponde ao valor agendado; o valor pago permanece disponível em `APOIO`. As subcategorias com código iniciado por `DIREÇÃO -` alimentam o total de Direção, e `PPGEL +` é distribuído conforme os percentuais informados em `APOIO`.
+
+Não existe uma coluna `Grupo no resumo`. As linhas do resumo identificam a categoria pelo nome por extenso ou pelo código de débito cadastrado em `APOIO`. Para apresentar uma categoria nova, copie uma linha de categoria do resumo, mantenha as fórmulas e troque o nome pelo nome ou código correspondente. Categorias sem linha no resumo são sinalizadas como pendência.
+
+Ao adicionar linhas em `BASE VIAGENS` ou `APOIO`, copie uma linha existente para preservar as fórmulas calculadas. Os intervalos de consulta e soma acompanham a última PCDP ou categoria preenchida, mesmo com linhas vazias entre os dados.
+
+### Atualizações e backups
+
+A extração usa a planilha existente para atualizar `BASE VIAGENS`, preservando os códigos de débito e as decisões de desconto pela PCDP completa, além das entradas de `APOIO` e dos ajustes de `RESUMO GASTOS`. Não é necessário executar um criador de planilha separadamente.
+
+Se a planilha não existir, o sistema cria uma nova. Quando disponível, a referência `input/.Diárias-Pass-Transp 2026 - Consulta Saldos.xlsx` fornece o formato original e os dados iniciais; o arquivo de referência é somente lido. Mantenha a planilha ajustada no caminho de saída para que ela seja usada nas próximas atualizações.
+
+Antes de substituir uma planilha existente, o sistema valida a atualização e cria um backup com data e hora em `output/`. Se a nova listagem não contiver alguma PCDP já publicada, a atualização é interrompida para permitir a conferência, preservando a planilha anterior.
 
 ## Desenvolvimento
 
-Os módulos do pacote usam imports absolutos, por exemplo `from scdp_automation.relatorio import Viagem`. O Ruff verifica essa regra e, com a extensão Ruff do VS Code, o workspace usa Ruff para formatar Python e aplicar correções de imports ao salvar. A ação de correção habilita os fixes inseguros usados pela regra `TID252`; revise as alterações sugeridas. A formatação isolada (`ruff format`) não altera imports. O ty valida tipos com `uv run ty check`; não formata código.
-
-Execute verificações da raiz do projeto:
+Execute as verificações na raiz do projeto:
 
 ```sh
 uv run python -m unittest discover -v
 uv run ruff check .
-uv run ruff format .
 uv run ruff format --check .
 uv run ty check
 ```
 
-O ty valida tipos; ele não formata nem reescreve imports. Os arquivos em `input/`, `output/`, `logs/`, o perfil `.scdp-browser/`, `.scdp-config.toml` e `.env` são locais e ignorados pelo Git. Não publique planilhas, resultados de viagem, credenciais ou dados de sessão.
+Para aplicar a formatação Python, use `uv run ruff format .`. Após alterar dependências, execute `uv sync`.
+
+Os arquivos em `input/`, `output/` e `logs/`, as cópias de perfil `.scdp-browser*`, `.scdp-config.toml` e `.env` são locais e ignorados pelo Git. Não publique credenciais, perfis de navegador, resultados ou planilhas privadas.

@@ -35,7 +35,7 @@ class FidelityTests(unittest.TestCase):
         base = workbook["BASE VIAGENS"]
         self.assertEqual(base.max_row, 3)
         self.assertEqual(
-            [base.cell(r, 16).value for r in (2, 3)], ["AGRONOMIA", "PPGEL +"]
+            [base.cell(r, 17).value for r in (2, 3)], ["AGRONOMIA", "PPGEL +"]
         )
         support = workbook["APOIO"]
         row = next(
@@ -109,7 +109,7 @@ class FidelityTests(unittest.TestCase):
         refreshed = load_workbook(candidate)
         self.addCleanup(refreshed.close)
         self.assertEqual(
-            [refreshed["BASE VIAGENS"].cell(r, 16).value for r in (2, 3, 4)],
+            [refreshed["BASE VIAGENS"].cell(r, 17).value for r in (2, 3, 4)],
             ["PPGEL +", "AGRONOMIA", None],
         )
         self.assertEqual(
@@ -152,7 +152,7 @@ class FidelityTests(unittest.TestCase):
             xlsx_output.publish_workbook([make_trip("999001/26")], path)
         workbook = load_workbook(path)
         self.addCleanup(workbook.close)
-        self.assertEqual(workbook["BASE VIAGENS"]["P2"].value, "AGRONOMIA")
+        self.assertEqual(workbook["BASE VIAGENS"]["Q2"].value, "AGRONOMIA")
         self.assertEqual(workbook["RESUMO GASTOS"]["B5"].value, "CURSOS DE GRADUAÇÃO")
 
     def test_reference_cannot_be_used_as_output(self):
@@ -173,7 +173,7 @@ class FidelityTests(unittest.TestCase):
         workbook = load_workbook(candidate)
         self.addCleanup(workbook.close)
         self.assertEqual(
-            [workbook["BASE VIAGENS"].cell(r, 16).value for r in (2, 3, 4)],
+            [workbook["BASE VIAGENS"].cell(r, 17).value for r in (2, 3, 4)],
             [None, "PPGEL +", "AGRONOMIA"],
         )
 
@@ -192,7 +192,7 @@ class FidelityTests(unittest.TestCase):
         workbook = load_workbook(path)
         self.addCleanup(workbook.close)
         for row in range(2, workbook["BASE VIAGENS"].max_row + 1):
-            workbook["BASE VIAGENS"].cell(row, 16).value = None
+            workbook["BASE VIAGENS"].cell(row, 17).value = None
         for col in (9, 10, 11):
             workbook["APOIO"].cell(21, col).value = None
         workbook["APOIO"]["E21"] = 900

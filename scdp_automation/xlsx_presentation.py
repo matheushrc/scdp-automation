@@ -5,12 +5,12 @@ from __future__ import annotations
 import math
 from textwrap import wrap
 
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-BASE_WIDTHS = (15, 26, 18, 12, 14, 14, 14, 14, 14, 14, 16, 15, 15, 15, 17, 20, 16)
+BASE_WIDTHS = (15, 26, 18, 12, 14, 14, 14, 14, 14, 14, 16, 15, 15, 15, 48, 17, 20, 16)
 SUPPORT_WIDTHS = (20, 26, 16, 16, 16, 16, 14, 14, 12, 12, 12, 18)
 DATE_HEADERS = {
     "Data de início da viagem",
@@ -22,6 +22,10 @@ DATE_HEADERS = {
 def _compact_sheet(sheet: Worksheet, widths: tuple[int, ...]) -> None:
     widths = widths[: sheet.max_column]
     alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for cell in sheet[1]:
+        cell.fill = PatternFill(fill_type="solid", fgColor="FF1F4E78")
+        cell.font = Font(color="FFFFFFFF", bold=True)
+        cell.alignment = alignment
     sheet.sheet_format.defaultRowHeight = 32
     sheet.freeze_panes = "A2"
     for column, width in enumerate(widths, 1):

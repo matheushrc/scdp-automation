@@ -68,6 +68,7 @@ class CodeSummaryTests(unittest.TestCase):
                     None,
                     None,
                     None,
+                    None,
                     "TESTE",
                 ]
             )
@@ -114,6 +115,7 @@ class CodeSummaryTests(unittest.TestCase):
                     0,
                     0,
                     75,
+                    None,
                     None,
                     None,
                     None,
@@ -205,6 +207,7 @@ class CodeSummaryTests(unittest.TestCase):
                     0,
                     0,
                     75,
+                    None,
                     None,
                     None,
                     None,

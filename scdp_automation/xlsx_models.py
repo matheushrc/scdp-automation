@@ -37,6 +37,7 @@ class TripSummary:
     start_date: date | None = None
     end_date: date | None = None
     verified_date: date | None = None
+    description: str | None = None
 
 
 DEBIT_CATEGORIES: tuple[DebitCategory, ...] = (
@@ -124,6 +125,7 @@ def summarize_trips(trips: Sequence[Viagem]) -> list[TripSummary]:
                 start_date=trip.data_inicio,
                 end_date=trip.data_termino,
                 verified_date=trip.data_da_ultima_verificacao,
+                description=trip.descricao_do_motivo_da_viagem,
             )
         )
 

@@ -212,6 +212,7 @@ def restore_legacy_group_layout(workbook) -> None:
 
     from scdp_automation.xlsx_layout import prepare_ranges
 
+    restore_base_without_description(workbook)
     support = workbook["APOIO"]
     support.insert_cols(9)
     support["I1"] = "Grupo no resumo"
@@ -225,3 +226,32 @@ def restore_legacy_group_layout(workbook) -> None:
         support.cell(row, 9).value = label
     with patch("scdp_automation.xlsx_code_summary.migrate_code_summary"):
         prepare_ranges(workbook)
+
+
+def restore_base_without_description(workbook) -> None:
+    """Restore the previous BASE VIAGENS schema for migration tests."""
+    from scdp_automation.xlsx_adjustments import translate_base_references
+
+    base = workbook["BASE VIAGENS"]
+    if base.cell(1, 15).value != "Descrição do pedido":
+        return
+    for sheet in workbook:
+        for row in sheet:
+            for cell in row:
+                if cell.data_type == "f":
+                    cell.value = translate_base_references(
+                        cell.value, sheet.title, {16: 15, 17: 16, 18: 17}
+                    )
+    for name in workbook.defined_names.values():
+        name.attr_text = translate_base_references(
+            "=" + name.attr_text, "", {16: 15, 17: 16, 18: 17}
+        )[1:]
+    base.delete_cols(15)
+    for validation in base.data_validations.dataValidation:
+        if validation.formula1 in ("CodigosDebito", "=CodigosDebito"):
+            validation.sqref = "P2:P1048576"
+        elif validation.formula1 == '"Sim,Não"':
+            validation.sqref = "Q2:Q1048576"
+    base.conditional_formatting._cf_rules.clear()
+    base.tables["tblBaseViagens"].ref = f"A1:Q{max(2, base.max_row)}"
+    base.tables["tblBaseViagens"].tableColumns = []

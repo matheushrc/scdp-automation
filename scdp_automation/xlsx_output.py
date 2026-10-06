@@ -41,12 +41,10 @@ _CHECKOUT = Path(__file__).resolve().parents[1]
 _REFERENCE_ROOT = (
     _CHECKOUT.parent.parent if _CHECKOUT.parent.name == ".worktrees" else _CHECKOUT
 )
-DEFAULT_REFERENCE = (
-    _REFERENCE_ROOT / "input" / ".Diárias-Pass-Transp 2026 - Consulta Saldos.xlsx"
-)
+DEFAULT_REFERENCE = _REFERENCE_ROOT / "input" / "gastos_scdp_2026.xlsx"
 
 
-BASE_HEADERS = (
+LEGACY_BASE_HEADERS = (
     "PCDP",
     "Proposto",
     "Situação",
@@ -64,6 +62,12 @@ BASE_HEADERS = (
     "Segmento",
     "Código de débito",
     "Descontar do curso?",
+)
+
+BASE_HEADERS = (
+    *LEGACY_BASE_HEADERS[:14],
+    "Descrição do pedido",
+    *LEGACY_BASE_HEADERS[14:],
 )
 
 SUPPORT_HEADERS = (
@@ -285,6 +289,16 @@ def build_summary_formulas(workbook: Workbook) -> None:
     _add_table(summary, SUMMARY_TABLE_NAME, f"A1:R{row}")
 
 
+def _is_current_reference(path: Path) -> bool:
+    if not path.exists():
+        return False
+    workbook = load_workbook(path, read_only=True)
+    try:
+        return "BASE VIAGENS" in workbook.sheetnames
+    finally:
+        workbook.close()
+
+
 def create_workbook_template(path: Path, reference_path: Path | None = None) -> None:
     """Create the formula-driven three-sheet annual spending workbook."""
     source_path = reference_path or DEFAULT_REFERENCE
@@ -293,15 +307,22 @@ def create_workbook_template(path: Path, reference_path: Path | None = None) -> 
             "O destino não pode ser a planilha de referência."
         )
     path.parent.mkdir(parents=True, exist_ok=True)
+    if _is_current_reference(source_path):
+        workbook = _load_workbook_for_refresh(source_path)
+        try:
+            workbook.save(path)
+        finally:
+            workbook.close()
+        return
     workbook = Workbook()
     base = workbook.active
     base.title = "BASE VIAGENS"
     support = workbook.create_sheet("APOIO")
     summary = workbook.create_sheet("RESUMO GASTOS")
 
-    for column, header in enumerate(BASE_HEADERS, start=1):
+    for column, header in enumerate(LEGACY_BASE_HEADERS, start=1):
         base.cell(1, column, header)
-    base.append([None] * len(BASE_HEADERS))
+    base.append([None] * len(LEGACY_BASE_HEADERS))
 
     for column, header in enumerate(SUPPORT_HEADERS, start=1):
         support.cell(1, column, header)
@@ -364,8 +385,10 @@ def create_workbook_template(path: Path, reference_path: Path | None = None) -> 
     else:
         build_summary_formulas(workbook)
 
+    from scdp_automation.xlsx_description import migrate_description
     from scdp_automation.xlsx_presentation import format_input_sheets
 
+    migrate_description(workbook)
     format_input_sheets(workbook)
 
     workbook.calculation.calcMode = "auto"
@@ -377,7 +400,13 @@ def create_workbook_template(path: Path, reference_path: Path | None = None) -> 
 def install_base_controls(base: Worksheet) -> None:
     """Cover future manual rows with choice lists and missing-decision highlighting."""
 
-    for column, header in enumerate(BASE_HEADERS, 1):
+    headers = (
+        BASE_HEADERS
+        if base.cell(1, 15).value == "Descrição do pedido"
+        else LEGACY_BASE_HEADERS
+    )
+    decision_column = "R" if headers == BASE_HEADERS else "Q"
+    for column, header in enumerate(headers, 1):
         base.cell(1, column, header)
     validations = cast(list[DataValidation], base.data_validations.dataValidation)
     if not any(v.formula1 == '"Sim,Não"' for v in validations):
@@ -391,7 +420,7 @@ def install_base_controls(base: Worksheet) -> None:
             errorTitle="Decisão inválida",
             error="Selecione Sim ou Não.",
         )
-        validation.add(f"Q2:Q{_BASE_LAST_ROW}")
+        validation.add(f"{decision_column}2:{decision_column}{_BASE_LAST_ROW}")
         base.add_data_validation(validation)
     install_decision_highlighting(base)
     for column in (14, 15, 16, 17):
@@ -402,13 +431,21 @@ def install_decision_highlighting(base: Worksheet) -> None:
     """Distinguish undecided cancellations from missing travel classifications."""
     from openpyxl.formatting.rule import FormulaRule
 
-    red_formula = 'AND($C2="Cancelada",$Q2="",$A2<>"")'
-    yellow_formula = 'AND($A2<>"",$O2="")'
+    modern = base.cell(1, 15).value == "Descrição do pedido"
+    decision = "R" if modern else "Q"
+    segment = "P" if modern else "O"
+    last = "R" if modern else "Q"
+    red_formula = f'AND($C2="Cancelada",${decision}2="",$A2<>"")'
+    yellow_formula = f'AND($A2<>"",${segment}2="")'
     managed_formulas = {
         red_formula,
         yellow_formula,
+        'AND($C2="Cancelada",$Q2="",$A2<>"")',
+        'AND($A2<>"",$O2="")',
         'AND($Q2="",$A2<>"")',
         'AND($A2<>"",OR($P2="",$Q2=""))',
+        'AND($R2="",$A2<>"")',
+        'AND($A2<>"",OR($Q2="",$R2=""))',
     }
     for area in list(base.conditional_formatting):
         rules = base.conditional_formatting[area]
@@ -434,7 +471,7 @@ def install_decision_highlighting(base: Worksheet) -> None:
             formula=[formula], fill=PatternFill("solid", fgColor=color), stopIfTrue=True
         )
         rule.priority = priority
-        base.conditional_formatting.add(f"A2:Q{_BASE_LAST_ROW}", rule)
+        base.conditional_formatting.add(f"A2:{last}{_BASE_LAST_ROW}", rule)
 
 
 def _check_workbook_structure(workbook: Workbook) -> None:
@@ -502,7 +539,7 @@ def _check_workbook_structure(workbook: Workbook) -> None:
         for validation in base.data_validations.dataValidation
         if validation.type == "list" and validation.formula1 == f"={CODE_LIST_NAME}"
     ]
-    if len(validations) != 1 or str(validations[0].sqref) != f"P2:P{_BASE_LAST_ROW}":
+    if len(validations) != 1 or str(validations[0].sqref) != f"Q2:Q{_BASE_LAST_ROW}":
         raise WorkbookValidationError(
             "A validação de códigos em BASE VIAGENS está ausente."
         )
@@ -531,7 +568,14 @@ def _check_workbook_structure(workbook: Workbook) -> None:
             summary.cell(summary_row, column).value
             for column in range(1, len(SUMMARY_HEADERS) + 1)
         )
-        if actual_formulas != _category_summary_formulas(summary_row, support_row):
+        from scdp_automation.xlsx_description import shift_description_references
+
+        if actual_formulas != tuple(
+            shift_description_references(value, "RESUMO GASTOS")
+            if isinstance(value, str) and value.startswith("=")
+            else value
+            for value in _category_summary_formulas(summary_row, support_row)
+        ):
             raise WorkbookValidationError(
                 "Uma fórmula da worksheet RESUMO GASTOS está ausente ou foi alterada."
             )
@@ -557,6 +601,12 @@ def _check_workbook_structure(workbook: Workbook) -> None:
         _unclassified_sumifs_formula("K", canceled_only=True),
         f"=O{pending_row}",
         "Pendente",
+    )
+    expected_pending_formulas = tuple(
+        shift_description_references(value, "RESUMO GASTOS")
+        if isinstance(value, str) and value.startswith("=")
+        else value
+        for value in expected_pending_formulas
     )
     actual_pending_formulas = tuple(
         summary.cell(pending_row, column).value
@@ -596,7 +646,7 @@ def _check_common_structure(workbook: Workbook) -> None:
     if not any(
         v.type == "list"
         and v.formula1 in (f"={CODE_LIST_NAME}", CODE_LIST_NAME)
-        and str(v.sqref) == f"P2:P{_BASE_LAST_ROW}"
+        and str(v.sqref) == f"Q2:Q{_BASE_LAST_ROW}"
         for v in validations
     ):
         raise WorkbookValidationError("Validação de códigos de débito ausente.")
@@ -709,6 +759,9 @@ def _load_workbook_for_refresh(
                     validation.formula1 = f"={CODE_LIST_NAME}"
                     validation.sqref = f"P2:P{_BASE_LAST_ROW}"
         if "BASE VIAGENS" in workbook.sheetnames:
+            from scdp_automation.xlsx_description import migrate_description
+
+            migrate_description(workbook)
             install_decision_highlighting(workbook["BASE VIAGENS"])
         _check_workbook_structure(workbook)
     except Exception:
@@ -734,6 +787,10 @@ def _write_base_rows(
     ranged = LAYOUT_NAME in workbook.defined_names
     previous_dates = {
         base.cell(r, 1).value: tuple(base.cell(r, c).value for c in (12, 13, 14))
+        for r in range(2, base.max_row + 1)
+    }
+    previous_descriptions = {
+        base.cell(r, 1).value: base.cell(r, 15).value
         for r in range(2, base.max_row + 1)
     }
     old_last_row = max(base.max_row, 2)
@@ -775,13 +832,18 @@ def _write_base_rows(
             base.cell(row, column).value = value
         base.cell(
             row,
-            15,
-            range_segment_formula(row, support_limit(workbook))
+            16,
+            range_segment_formula(row, support_limit(workbook)).replace("$P", "$Q")
             if ranged
-            else _segment_formula(row, support_last_row),
+            else _segment_formula(row, support_last_row).replace("$P", "$Q"),
         )
-        base.cell(row, 16).value = manual_codes.get(pcdp)
-        base.cell(row, 17).value = (manual_decisions or {}).get(pcdp)
+        base.cell(row, 15).value = (
+            summary.description or previous_descriptions.get(pcdp)
+            if index < len(summaries)
+            else None
+        )
+        base.cell(row, 17).value = manual_codes.get(pcdp)
+        base.cell(row, 18).value = (manual_decisions or {}).get(pcdp)
         dates = (
             (summary.start_date, summary.end_date, summary.verified_date)
             if index < len(summaries)
@@ -796,7 +858,7 @@ def _write_base_rows(
         for column in range(5, 12):
             base.cell(row, column).number_format = '"R$" #,##0.00;[Red]-"R$" #,##0.00'
 
-    base.tables[BASE_TABLE_NAME].ref = f"A1:Q{target_last_row}"
+    base.tables[BASE_TABLE_NAME].ref = f"A1:R{target_last_row}"
     base.tables[BASE_TABLE_NAME].tableColumns = []
     from scdp_automation.xlsx_presentation import format_base_sheet
 
@@ -819,6 +881,11 @@ def build_candidate(
         raise WorkbookValidationError(
             f"O caminho de candidato já existe: {candidate_path}"
         )
+
+    source_path = reference_path or DEFAULT_REFERENCE
+    if not current_path.exists() and _is_current_reference(source_path):
+        build_candidate(trips, source_path, candidate_path, reference_path=source_path)
+        return
 
     summaries = _summaries(trips)
     incoming_pcdps = {summary.pcdp for summary in summaries}
@@ -846,12 +913,12 @@ def build_candidate(
                     "A base publicada contém PCDPs inválidas ou duplicadas."
                 )
             existing_pcdps.add(pcdp)
-            decision = base.cell(row, 17).value
+            decision = base.cell(row, 18).value
             if decision not in (None, "", "Sim", "Não"):
                 workbook.close()
                 raise WorkbookValidationError("Decisão de desconto inválida na base.")
             manual_decisions[pcdp] = decision or None
-            code = base.cell(row, 16).value
+            code = base.cell(row, 17).value
             if code in (None, ""):
                 continue
             if not isinstance(code, str) or code not in support_codes:
@@ -879,7 +946,11 @@ def build_candidate(
         from scdp_automation.xlsx_reference import read_reference
 
         source_path = reference_path or DEFAULT_REFERENCE
-        if LAYOUT_NAME not in workbook.defined_names and source_path.exists():
+        if (
+            LAYOUT_NAME not in workbook.defined_names
+            and source_path.exists()
+            and not _is_current_reference(source_path)
+        ):
             old_allocations = {
                 workbook["APOIO"].cell(r, 1).value: workbook["APOIO"].cell(r, 4).value
                 for r in range(2, workbook["APOIO"].max_row + 1)
@@ -931,12 +1002,12 @@ def _validate_candidate(
                     "O candidato contém PCDPs inválidas ou duplicadas."
                 )
             actual_pcdps.append(pcdp)
-            code = base.cell(row, 16).value
+            code = base.cell(row, 17).value
             if code not in (None, "") and code not in support_codes:
                 raise WorkbookValidationError(
                     "O candidato contém código de débito desconhecido."
                 )
-            segment_formula = base.cell(row, 15).value
+            segment_formula = base.cell(row, 16).value
             from scdp_automation.xlsx_layout import (
                 LAYOUT_NAME,
                 range_segment_formula,
@@ -945,9 +1016,9 @@ def _validate_candidate(
             )
 
             expected_segment = (
-                range_segment_formula(row, support_limit(workbook))
+                range_segment_formula(row, support_limit(workbook)).replace("$P", "$Q")
                 if LAYOUT_NAME in workbook.defined_names
-                else _segment_formula(row, support.max_row)
+                else _segment_formula(row, support.max_row).replace("$P", "$Q")
             )
             if not same_formula(segment_formula, expected_segment):
                 raise WorkbookValidationError(

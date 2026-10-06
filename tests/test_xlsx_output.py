@@ -264,6 +264,7 @@ class WorkbookTemplateTests(unittest.TestCase):
             "Data de início da viagem",
             "Data de término da viagem",
             "Data da última verificação",
+            "Descrição do pedido",
             "Segmento",
             "Código de débito",
             "Descontar do curso?",
@@ -287,7 +288,7 @@ class WorkbookTemplateTests(unittest.TestCase):
                 "Alocação inicial (R$)",
             ],
         )
-        self.assertEqual(workbook["BASE VIAGENS"].cell(1, 16).value, "Código de débito")
+        self.assertEqual(workbook["BASE VIAGENS"].cell(1, 17).value, "Código de débito")
         self.assertTrue(workbook.calculation.fullCalcOnLoad)
         self.assertTrue(workbook.calculation.forceFullCalc)
         self.assertEqual(workbook.calculation.calcMode, "auto")
@@ -337,7 +338,7 @@ class WorkbookTemplateTests(unittest.TestCase):
         ]
         self.assertEqual(len(validations), 1)
         self.assertEqual(validations[0].formula1, "=CodigosDebito")
-        self.assertEqual(str(validations[0].sqref), "P2:P1048576")
+        self.assertEqual(str(validations[0].sqref), "Q2:Q1048576")
 
         named_range = workbook.defined_names["CodigosDebito"]
         self.assertEqual(
@@ -357,8 +358,8 @@ class WorkbookTemplateTests(unittest.TestCase):
         self.assertIn("CANCELADAS (R$)", headers)
 
         self.assertTrue(summary["O2"].value.startswith("=SUMIFS("))
-        self.assertIn("'BASE VIAGENS'!$O:$O,$A2", summary["O2"].value)
-        self.assertIn("'BASE VIAGENS'!$P:$P,$B2", summary["O2"].value)
+        self.assertIn("'BASE VIAGENS'!$P:$P,$A2", summary["O2"].value)
+        self.assertIn("'BASE VIAGENS'!$Q:$Q,$B2", summary["O2"].value)
         self.assertEqual(summary["J2"].value, "=G2+H2-I2")
         self.assertEqual(summary["M2"].value, "=K2+L2")
         self.assertEqual(summary["Q2"].value, "=O2")
@@ -443,7 +444,7 @@ class WorkbookTemplateTests(unittest.TestCase):
         summary = workbook["RESUMO GASTOS"]
         base = workbook["BASE VIAGENS"]
         self.assertEqual(
-            [base.cell(row, 16).value for row in range(2, 5)],
+            [base.cell(row, 17).value for row in range(2, 5)],
             ["AGRONOMIA", "AFAST PAÍS", "AFAST PAÍS"],
         )
         rows_by_code = {
@@ -466,8 +467,8 @@ class WorkbookTemplateTests(unittest.TestCase):
         used_formula = summary.cell(active_row, 15).value
         self.assertTrue(used_formula.startswith("=SUMIFS("))
         self.assertIn("'BASE VIAGENS'!$K:$K", used_formula)
-        self.assertIn(f"'BASE VIAGENS'!$O:$O,$A{active_row}", used_formula)
-        self.assertIn(f"'BASE VIAGENS'!$P:$P,$B{active_row}", used_formula)
+        self.assertIn(f"'BASE VIAGENS'!$P:$P,$A{active_row}", used_formula)
+        self.assertIn(f"'BASE VIAGENS'!$Q:$Q,$B{active_row}", used_formula)
         self.assertEqual(summary.cell(active_row, 17).value, f"=O{active_row}")
         self.assertNotIn("+P", summary.cell(active_row, 17).value)
         self.assertNotIn("+L", summary.cell(active_row, 17).value)
@@ -509,12 +510,12 @@ def write_existing_workbook(
             base.cell(row, column, value)
         base.cell(
             row,
-            15,
-            Translator(base["O2"].value, origin="O2").translate_formula(f"O{row}"),
+            16,
+            Translator(base["P2"].value, origin="P2").translate_formula(f"P{row}"),
         )
-        base.cell(row, 16, codes.get(summary.pcdp))
+        base.cell(row, 17, codes.get(summary.pcdp))
 
-    base.tables["tblBaseViagens"].ref = f"A1:Q{max(2, len(trips) + 1)}"
+    base.tables["tblBaseViagens"].ref = f"A1:R{max(2, len(trips) + 1)}"
     support = workbook["APOIO"]
     for row in range(2, support.max_row + 1):
         code = support.cell(row, 1).value
@@ -530,7 +531,7 @@ def read_base_rows(path: Path) -> dict[str, tuple[object, ...]]:
     base = workbook["BASE VIAGENS"]
     rows = {
         base.cell(row, 1).value: tuple(
-            base.cell(row, column).value for column in range(1, 17)
+            base.cell(row, column).value for column in range(1, 19)
         )
         for row in range(2, base.max_row + 1)
         if base.cell(row, 1).value
@@ -540,6 +541,101 @@ def read_base_rows(path: Path) -> dict[str, tuple[object, ...]]:
 
 
 class WorkbookRefreshTests(unittest.TestCase):
+    def test_description_migration_preserves_codes_decisions_and_reference_formulas(
+        self,
+    ) -> None:
+        from openpyxl import load_workbook
+        from openpyxl.workbook.defined_name import DefinedName
+
+        from tests.xlsx_fixtures import restore_base_without_description
+
+        trip = make_trip()
+        trip.descricao_do_motivo_da_viagem = "Descrição já extraída."
+        with TemporaryDirectory() as directory:
+            current = Path(directory) / "current.xlsx"
+            candidate = Path(directory) / "candidate.xlsx"
+            write_existing_workbook(
+                current, [trip], {trip.numero_da_solicitacao: "AGRONOMIA"}
+            )
+            workbook = load_workbook(current)
+            workbook["BASE VIAGENS"].cell(2, 18, "Não")
+            restore_base_without_description(workbook)
+            workbook.defined_names.add(
+                DefinedName("ManualCode", attr_text="'BASE VIAGENS'!$P$2")
+            )
+            workbook.save(current)
+            workbook.close()
+            before = current.read_bytes()
+
+            build_candidate([trip], current, candidate)
+
+            self.assertEqual(current.read_bytes(), before)
+            workbook = load_workbook(candidate)
+            base = workbook["BASE VIAGENS"]
+            self.assertEqual(base["O2"].value, trip.descricao_do_motivo_da_viagem)
+            self.assertEqual(base["Q2"].value, "AGRONOMIA")
+            self.assertEqual(base["R2"].value, "Não")
+            self.assertEqual(
+                workbook.defined_names["ManualCode"].attr_text,
+                "'BASE VIAGENS'!$Q$2",
+            )
+            self.assertEqual(base.tables["tblBaseViagens"].ref, "A1:R2")
+            workbook.close()
+
+    def test_refresh_exports_request_description_before_classification(self) -> None:
+        from openpyxl import load_workbook
+
+        trip = make_trip()
+        trip.descricao_do_motivo_da_viagem = "Participação em evento acadêmico."
+        with TemporaryDirectory() as directory:
+            current = Path(directory) / "missing.xlsx"
+            candidate = Path(directory) / "candidate.xlsx"
+            build_candidate([trip], current, candidate)
+            workbook = load_workbook(candidate)
+            headers = [cell.value for cell in workbook["BASE VIAGENS"][1]]
+            self.assertIn("Descrição do pedido", headers)
+            self.assertEqual(
+                headers[-3:], ["Segmento", "Código de débito", "Descontar do curso?"]
+            )
+            column = headers.index("Descrição do pedido") + 1
+            self.assertEqual(
+                workbook["BASE VIAGENS"].cell(2, column).value,
+                trip.descricao_do_motivo_da_viagem,
+            )
+            workbook.close()
+
+    def test_first_refresh_uses_current_reference_without_changing_it(self) -> None:
+        from openpyxl import load_workbook
+
+        trip = make_trip()
+        with TemporaryDirectory() as directory:
+            reference = Path(directory) / "reference.xlsx"
+            current = Path(directory) / "missing.xlsx"
+            candidate = Path(directory) / "candidate.xlsx"
+            template = Path(directory) / "template.xlsx"
+            write_existing_workbook(
+                reference, [trip], {trip.numero_da_solicitacao: "AGRONOMIA"}
+            )
+            workbook = load_workbook(reference)
+            workbook["BASE VIAGENS"].cell(2, 18, "Sim")
+            workbook["APOIO"].cell(2, 4, 4321)
+            workbook.save(reference)
+            workbook.close()
+            original_bytes = reference.read_bytes()
+
+            create_workbook_template(template, reference)
+            build_candidate([trip], current, candidate, reference_path=reference)
+
+            self.assertEqual(reference.read_bytes(), original_bytes)
+            self.assertFalse(current.exists())
+            for path in (template, candidate):
+                rows = read_base_rows(path)
+                self.assertEqual(rows[trip.numero_da_solicitacao][16], "AGRONOMIA")
+                workbook = load_workbook(path)
+                self.assertEqual(workbook["BASE VIAGENS"].cell(2, 18).value, "Sim")
+                self.assertEqual(workbook["APOIO"].cell(2, 4).value, 4321)
+                workbook.close()
+
     def test_refresh_preserves_manual_codes_by_full_pcdp_after_reordering(self) -> None:
         first = make_trip("123456/26-1C")
         second = make_trip("123456/26-2C")
@@ -565,8 +661,8 @@ class WorkbookRefreshTests(unittest.TestCase):
             self.assertEqual(
                 list(rows), ["123456/26-2C", "234567/26-1C", "123456/26-1C"]
             )
-            self.assertEqual(rows["123456/26-2C"][15], "PPGEL +")
-            self.assertEqual(rows["123456/26-1C"][15], "AGRONOMIA")
+            self.assertEqual(rows["123456/26-2C"][16], "PPGEL +")
+            self.assertEqual(rows["123456/26-1C"][16], "AGRONOMIA")
 
     def test_refresh_leaves_new_pcdp_code_blank(self) -> None:
         existing = make_trip("123456/26")
@@ -582,8 +678,8 @@ class WorkbookRefreshTests(unittest.TestCase):
             build_candidate([existing, added], current, candidate)
 
             rows = read_base_rows(candidate)
-            self.assertEqual(rows[existing.numero_da_solicitacao][15], "AGRONOMIA")
-            self.assertIsNone(rows[added.numero_da_solicitacao][15])
+            self.assertEqual(rows[existing.numero_da_solicitacao][16], "AGRONOMIA")
+            self.assertIsNone(rows[added.numero_da_solicitacao][16])
 
     def test_refresh_preserves_manual_allocations_and_formula_cells(self) -> None:
         first = make_trip("123456/26")

@@ -72,9 +72,9 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
         xlsx_output.import_reference_workbook(self.reference, current)
         workbook = load_workbook(current)
         base = workbook["BASE VIAGENS"]
-        self.assertEqual(base["Q1"].value, "Descontar do curso?")
-        base["Q2"] = "Não"
-        base["Q3"] = "Sim"
+        self.assertEqual(base["R1"].value, "Descontar do curso?")
+        base["R2"] = "Não"
+        base["R3"] = "Sim"
         workbook.save(current)
         workbook.close()
         trips = [make_trip("999002/26-1C"), make_trip("999001/26")]
@@ -82,17 +82,17 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
         workbook = load_workbook(candidate)
         self.addCleanup(workbook.close)
         base = workbook["BASE VIAGENS"]
-        self.assertEqual([base.cell(r, 17).value for r in (2, 3)], ["Sim", "Não"])
+        self.assertEqual([base.cell(r, 18).value for r in (2, 3)], ["Sim", "Não"])
         self.assertEqual(base["L2"].value.date(), date(2026, 3, 1))
         self.assertEqual(base["L2"].number_format, "dd/mm/yyyy")
         self.assertTrue(
             any(
-                v.formula1 == '"Sim,Não"' and "Q1048576" in str(v.sqref)
+                v.formula1 == '"Sim,Não"' and "R1048576" in str(v.sqref)
                 for v in base.data_validations.dataValidation
             )
         )
         self.assertTrue(
-            any(str(c.sqref) == "A2:Q1048576" for c in base.conditional_formatting)
+            any(str(c.sqref) == "A2:R1048576" for c in base.conditional_formatting)
         )
 
     def test_support_order_history_group_and_manual_summary_survive(self):
@@ -235,7 +235,7 @@ class MigrationTests(unittest.TestCase):
         )
         workbook = load_workbook(candidate)
         self.addCleanup(workbook.close)
-        self.assertEqual(workbook["BASE VIAGENS"]["Q2"].value, "Sim")
+        self.assertEqual(workbook["BASE VIAGENS"]["R2"].value, "Sim")
         self.assertEqual(workbook["APOIO"]["D3"].value, 555)
         self.assertEqual(workbook["APOIO"]["E3"].value, 444)
 
@@ -325,13 +325,13 @@ class ColumnOrderTests(unittest.TestCase):
             self.addCleanup(workbook.close)
             base = workbook["BASE VIAGENS"]
             self.assertEqual(
-                [base.cell(1, c).value for c in (15, 16, 17)],
+                [base.cell(1, c).value for c in (16, 17, 18)],
                 ["Segmento", "Código de débito", "Descontar do curso?"],
             )
             self.assertEqual(
-                [base.cell(r, 16).value for r in (2, 3)], ["PPGH/PPGDH", "PPGH/PPGDH"]
+                [base.cell(r, 17).value for r in (2, 3)], ["PPGH/PPGDH", "PPGH/PPGDH"]
             )
-            self.assertEqual([base.cell(r, 17).value for r in (2, 3)], ["Não", "Sim"])
+            self.assertEqual([base.cell(r, 18).value for r in (2, 3)], ["Não", "Sim"])
             self.assertEqual(base["L2"].value.date(), date(2026, 1, 10))
             support = workbook["APOIO"]
             history = [

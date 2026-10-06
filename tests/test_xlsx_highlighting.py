@@ -47,7 +47,7 @@ class HighlightingTests(unittest.TestCase):
             self.assertTrue(red.stopIfTrue)
             self.assertEqual(red.dxf.fill.fgColor.rgb[-6:], "FFC7CE")
             self.assertEqual(yellow.dxf.fill.fgColor.rgb[-6:], "FFF2CC")
-            self.assertTrue(all(str(area.sqref) == "A2:Q1048576" for area, _ in rules))
+            self.assertTrue(all(str(area.sqref) == "A2:R1048576" for area, _ in rules))
             cases = [
                 ("Cancelada", None, "SEG 1 GRADUAÇÃO", "111111/26", True, False),
                 ("Concluída", None, "SEG 1 GRADUAÇÃO", "222222/26", False, False),
@@ -61,8 +61,8 @@ class HighlightingTests(unittest.TestCase):
             for row, (status, decision, segment, pcdp, _, _) in enumerate(cases, 100):
                 base.cell(row, 1).value = pcdp
                 base.cell(row, 3).value = status
-                base.cell(row, 15).value = segment
-                base.cell(row, 17).value = decision
+                base.cell(row, 16).value = segment
+                base.cell(row, 18).value = decision
                 for col, rule in ((20, red), (21, yellow)):
                     base.cell(row, col).value = Translator(
                         "=" + rule.formula[0], origin="A2"

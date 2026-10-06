@@ -98,7 +98,7 @@ Abra `output/gastos_scdp_2026.xlsx` para conferir e preencher os dados. As fórm
 
 ### BASE VIAGENS
 
-Cada linha representa uma PCDP. Confira os valores extraídos e use as últimas três colunas:
+Cada linha representa uma PCDP. A coluna `Descrição do pedido` mostra o motivo detalhado extraído do SCDP e fica vazia enquanto essa informação não estiver disponível. Confira os valores extraídos e use as últimas três colunas:
 
 - `Segmento`: calculado a partir do código de débito cadastrado em `APOIO`.
 - `Código de débito`: escolha a categoria responsável pela despesa na lista suspensa.
@@ -130,7 +130,7 @@ Ao adicionar linhas em `BASE VIAGENS` ou `APOIO`, copie uma linha existente para
 
 A extração usa a planilha existente para atualizar `BASE VIAGENS`, preservando os códigos de débito e as decisões de desconto pela PCDP completa, além das entradas de `APOIO` e dos ajustes de `RESUMO GASTOS`. Não é necessário executar um criador de planilha separadamente.
 
-Se a planilha não existir, o sistema cria uma nova. Quando disponível, a referência `input/.Diárias-Pass-Transp 2026 - Consulta Saldos.xlsx` fornece o formato original e os dados iniciais; o arquivo de referência é somente lido. Mantenha a planilha ajustada no caminho de saída para que ela seja usada nas próximas atualizações.
+Se a planilha não existir, o sistema cria uma nova. Quando disponível, a referência `input/gastos_scdp_2026.xlsx` fornece o layout ajustado e os preenchimentos iniciais de APOIO e RESUMO GASTOS; o arquivo de referência é somente lido. Essa referência é uma cópia da planilha de saída com BASE VIAGENS vazia, preparada para servir como ponto de partida. Mantenha a planilha ajustada no caminho de saída para que ela seja usada nas próximas atualizações.
 
 Antes de substituir uma planilha existente, o sistema valida a atualização e cria um backup com data e hora em `output/`. Se a nova listagem não contiver alguma PCDP já publicada, a atualização é interrompida para permitir a conferência, preservando a planilha anterior.
 

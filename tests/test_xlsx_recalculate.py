@@ -89,7 +89,7 @@ class RecalculationTests(unittest.TestCase):
             cached.close()
             workbook = load_workbook(output)
             base, support = workbook["BASE VIAGENS"], workbook["APOIO"]
-            base["Q2"] = "Não"
+            base["R2"] = "Não"
             row = support.max_row + 4
             support.cell(row, 1, "NOVO")
             support.cell(row, 2, "Nova categoria")
@@ -105,7 +105,7 @@ class RecalculationTests(unittest.TestCase):
             base.cell(row, 1, "111111/26")
             base.cell(row, 3, "Concluída")
             base.cell(row, 11, 12)
-            base.cell(row, 16, "NOVO")
+            base.cell(row, 17, "NOVO")
             workbook.save(output)
             workbook.close()
             recalculate_workbook(output)
@@ -114,7 +114,7 @@ class RecalculationTests(unittest.TestCase):
             self.assertEqual(cached["RESUMO GASTOS"]["C8"].value, 1000)
             cached.close()
             workbook = load_workbook(output)
-            workbook["BASE VIAGENS"]["Q2"] = "Sim"
+            workbook["BASE VIAGENS"]["R2"] = "Sim"
             group_row = workbook["APOIO"].max_row + 3
             support = workbook["APOIO"]
             for col, value in (

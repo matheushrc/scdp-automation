@@ -59,7 +59,18 @@ def install_names(workbook: Workbook) -> None:
                     attr_text=dynamic_range(
                         sheet,
                         chr(
-                            64 + BASE_COLUMN_MAP.get(ord(column) - 64, ord(column) - 64)
+                            64
+                            + BASE_COLUMN_MAP.get(ord(column) - 64, ord(column) - 64)
+                            + (
+                                1
+                                if workbook["BASE VIAGENS"].cell(1, 15).value
+                                == "Descrição do pedido"
+                                and BASE_COLUMN_MAP.get(
+                                    ord(column) - 64, ord(column) - 64
+                                )
+                                >= 15
+                                else 0
+                            )
                         )
                         if sheet == "BASE VIAGENS"
                         else chr(ord(column) - 1)
@@ -170,9 +181,14 @@ def merge_history(workbook: Workbook) -> None:
     summary["B62"] = None
 
 
-def translate_base_references(formula: str, sheet: str) -> str:
+def translate_base_references(
+    formula: str, sheet: str, column_map: dict[int, int] | None = None
+) -> str:
     tokens = Tokenizer(formula).items
-    mapping = {chr(64 + old): chr(64 + new) for old, new in BASE_COLUMN_MAP.items()}
+    mapping = {
+        chr(64 + old): chr(64 + new)
+        for old, new in (column_map or BASE_COLUMN_MAP).items()
+    }
     for token in tokens:
         if token.type != "OPERAND" or token.subtype != "RANGE":
             continue
@@ -197,7 +213,7 @@ def translate_base_references(formula: str, sheet: str) -> str:
 def reorder_base_columns(workbook: Workbook) -> None:
     """Keep stable named ranges while moving classification behind dates."""
     from scdp_automation.xlsx_layout import range_segment_formula
-    from scdp_automation.xlsx_output import BASE_HEADERS, install_base_controls
+    from scdp_automation.xlsx_output import LEGACY_BASE_HEADERS, install_base_controls
 
     for sheet in workbook:
         for row in sheet:
@@ -238,7 +254,7 @@ def reorder_base_columns(workbook: Workbook) -> None:
         for rule in base.conditional_formatting[area]:
             if rule.formula:
                 rule.formula = [f.replace("$N2=", "$Q2=") for f in rule.formula]
-    for col, header in enumerate(BASE_HEADERS, 1):
+    for col, header in enumerate(LEGACY_BASE_HEADERS, 1):
         base.cell(1, col).value = header
     base.tables["tblBaseViagens"].ref = f"A1:Q{max(2, base.max_row)}"
     base.tables["tblBaseViagens"].tableColumns = []

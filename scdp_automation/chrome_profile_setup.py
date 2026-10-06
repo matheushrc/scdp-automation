@@ -237,6 +237,16 @@ def _ignore_extension_directories(_directory: str, names: list[str]) -> set[str]
     return ignored_extensions
 
 
+def _filesystem_path(path: Path) -> str:
+    """Allow recursive Windows copies and cleanup beyond the MAX_PATH limit."""
+    value = os.path.abspath(path)
+    if platform.system() != "Windows" or value.startswith("\\\\?\\"):
+        return value
+    if value.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + value[2:]
+    return "\\\\?\\" + value
+
+
 def copy_chrome_profile(
     source_user_data_dir: Path,
     profile_directory: str,
@@ -286,8 +296,8 @@ def copy_chrome_profile(
 
     try:
         shutil.copytree(
-            profile_source,
-            staging / profile_directory,
+            _filesystem_path(profile_source),
+            _filesystem_path(staging / profile_directory),
             ignore=_ignore_extension_directories,
         )
         local_state_copy = staging / "Local State"
@@ -308,7 +318,7 @@ def copy_chrome_profile(
         raise ProfileSetupError("Could not finish the Chrome profile copy.") from None
     finally:
         if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(_filesystem_path(staging), ignore_errors=True)
 
 
 def chrome_process_is_running(
@@ -385,7 +395,7 @@ def _remove_path(path: Path) -> None:
     if path.is_symlink() or path.is_file():
         path.unlink(missing_ok=True)
     elif path.is_dir():
-        shutil.rmtree(path)
+        shutil.rmtree(_filesystem_path(path))
 
 
 def _wait_for_chrome_to_close(process_checker: Callable[[], bool]) -> None:

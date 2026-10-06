@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -10,12 +11,98 @@ from unittest.mock import patch
 from scdp_automation.chrome_profile_setup import (
     ProfileConfig,
     ProfileSetupError,
+    _filesystem_path,
     chrome_process_is_running,
+    copy_chrome_profile,
     load_profile_config,
     prepare_chrome_profile,
     selected_profile_directory,
     write_profile_config,
 )
+
+
+class WindowsProfileCopyTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "Uses the host filesystem to simulate Windows")
+    def test_copy_uses_extended_windows_paths_for_nested_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            destination = root / "clone"
+            create_user_data(source)
+            nested = source / "Profile 2" / ("a" * 120) / ("b" * 120)
+            nested.mkdir(parents=True)
+            (nested / "data").write_text("synthetic", encoding="utf-8")
+            original_copytree = shutil.copytree
+
+            def windows_copytree(src, dst, **kwargs):
+                longest_destination = Path(dst) / ("a" * 120) / ("b" * 120) / "data"
+                if len(str(longest_destination)) >= 260 and not str(dst).startswith(
+                    "\\\\?\\"
+                ):
+                    raise OSError(22, "[WinError 206]")
+                # Run the real recursive copy through the host filesystem.
+                with patch(
+                    "scdp_automation.chrome_profile_setup.shutil.copytree",
+                    original_copytree,
+                ):
+                    return original_copytree(
+                        str(src).removeprefix("\\\\?\\"),
+                        str(dst).removeprefix("\\\\?\\"),
+                        **kwargs,
+                    )
+
+            with (
+                patch(
+                    "scdp_automation.chrome_profile_setup.platform.system",
+                    return_value="Windows",
+                ),
+                patch(
+                    "scdp_automation.chrome_profile_setup.shutil.copytree",
+                    side_effect=windows_copytree,
+                ),
+            ):
+                copy_chrome_profile(source, "Profile 2", destination)
+
+            copied = destination / "Profile 2" / ("a" * 120) / ("b" * 120) / "data"
+            self.assertEqual(copied.read_text(encoding="utf-8"), "synthetic")
+
+    def test_extended_paths_support_unc_and_preserve_existing_prefix(self) -> None:
+        for original, expected in (
+            (r"C:\profiles\clone", r"\\?\C:\profiles\clone"),
+            (r"\\server\share\clone", r"\\?\UNC\server\share\clone"),
+            (r"\\?\C:\profiles\clone", r"\\?\C:\profiles\clone"),
+        ):
+            with (
+                self.subTest(path=original),
+                patch(
+                    "scdp_automation.chrome_profile_setup.platform.system",
+                    return_value="Windows",
+                ),
+                patch(
+                    "scdp_automation.chrome_profile_setup.os.path.abspath",
+                    return_value=original,
+                ),
+            ):
+                self.assertEqual(_filesystem_path(Path(original)), expected)
+
+    @unittest.skipUnless(os.name == "nt", "Requires the Windows filesystem")
+    def test_native_windows_copy_preserves_files_beyond_260_characters(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            destination = root / "clone"
+            create_user_data(source)
+            relative = Path("Profile 2") / ("a" * 120) / ("b" * 120) / "data"
+            original = Path(_filesystem_path(source / relative))
+            original.parent.mkdir(parents=True)
+            original.write_text("synthetic", encoding="utf-8")
+            try:
+                copy_chrome_profile(source, "Profile 2", destination)
+                copied = Path(_filesystem_path(destination / relative))
+                self.assertEqual(copied.read_text(encoding="utf-8"), "synthetic")
+            finally:
+                shutil.rmtree(_filesystem_path(source), ignore_errors=True)
+                shutil.rmtree(_filesystem_path(destination), ignore_errors=True)
 
 
 class InteractiveStream(io.StringIO):

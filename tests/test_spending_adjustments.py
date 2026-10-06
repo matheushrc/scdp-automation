@@ -10,6 +10,7 @@ from openpyxl import load_workbook
 from scdp_automation import extrator, xlsx_output
 from scdp_automation.xlsx_models import summarize_trips
 from tests.support.workbooks import (
+    final_template_fixture,
     make_trip,
     reference_fixture,
     restore_legacy_group_layout,
@@ -69,6 +70,45 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.reference = self.root / "reference.xlsx"
         reference_fixture(self.reference)
+
+    def test_rateio_required_for_classified_expense_without_budget(self):
+        from scdp_automation.xlsx_adjustments import validate_editable_layout
+        from scdp_automation.xlsx_output import WorkbookValidationError
+
+        path = self.root / "final.xlsx"
+        final_template_fixture(path)
+        workbook = load_workbook(path)
+        self.addCleanup(workbook.close)
+        base, support = workbook["BASE VIAGENS"], workbook["APOIO"]
+        rateio_row = next(
+            r
+            for r in range(2, support.max_row + 1)
+            if support.cell(r, 1).value == "PPGEL +"
+        )
+        base["Q2"] = "PPGEL +"
+        base["K2"] = 100
+        for column in (4, 5, 7, 8, 9, 10, 11):
+            support.cell(rateio_row, column).value = None
+        with self.assertRaisesRegex(WorkbookValidationError, "100%"):
+            validate_editable_layout(workbook)
+        for weights, valid in (
+            ((0.5, 0.25, 0.25), True),
+            ((0.5, 0.25, 0.20), False),
+            ((float("nan"), 0.25, 0.25), False),
+            ((True, 0, 0), False),
+        ):
+            with self.subTest(weights=weights):
+                for column, weight in zip((9, 10, 11), weights, strict=True):
+                    support.cell(rateio_row, column).value = weight
+                if valid:
+                    validate_editable_layout(workbook)
+                else:
+                    with self.assertRaisesRegex(WorkbookValidationError, "100%"):
+                        validate_editable_layout(workbook)
+        base["K2"] = None
+        for column in (9, 10, 11):
+            support.cell(rateio_row, column).value = None
+        validate_editable_layout(workbook)
 
     def test_decisions_and_dates_follow_complete_pcdp(self):
         current, candidate = self.root / "current.xlsx", self.root / "candidate.xlsx"

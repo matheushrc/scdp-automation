@@ -15,6 +15,134 @@ from scdp_automation.xlsx_output import (
 )
 
 
+def final_template_fixture(path: Path) -> None:
+    """Build the final editable layout independently of production writers."""
+    from datetime import date
+
+    from openpyxl.workbook.defined_name import DefinedName
+    from openpyxl.workbook.properties import CalcProperties
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.worksheet.table import Table
+
+    workbook = Workbook()
+    base = workbook.active
+    base.title = "BASE VIAGENS"
+    support = workbook.create_sheet("APOIO")
+    summary = workbook.create_sheet("RESUMO GASTOS")
+    base.append(BASE_HEADERS)
+    base.append([None] * 18)
+    base["P2"] = '=IF($Q2="","",IFERROR(VLOOKUP($Q2,ApoioCatalogo,3,FALSE),""))'
+    support.append(
+        (
+            "Código de débito",
+            "Nome por extenso",
+            "Segmento",
+            "Diárias e passagens distribuído (R$)",
+            "Transportes distribuído (R$)",
+            "Recurso total (R$)",
+            "Transportes agendado (R$)",
+            "Transportes pago (R$)",
+            "Rateio para PPGE (%)",
+            "Rateio para PPGEL (%)",
+            "Rateio para PPGH (%)",
+            "Total utilizado por categoria (R$)",
+        )
+    )
+    categories = (
+        ("AGRONOMIA", "Agronomia", "SEG 1 GRADUAÇÃO"),
+        ("PPGE", "Mestrado em Educação", "SEG 2 MESTRADO"),
+        ("PPGEL", "Mestrado em Estudos Linguísticos", "SEG 2 MESTRADO"),
+        ("HISTÓRIA", "História", "SEG 1 GRADUAÇÃO"),
+        ("PPGH/PPGDH", "Mestrado e Doutorado em História", "SEG 2 MESTRADO"),
+        ("PPGEL +", "Rateio entre programas", "SEG 2 MESTRADO"),
+        ("DIREÇÃO", "Direção", "SEG 3 OUTROS"),
+        ("DIREÇÃO - AGAS", "AGAS", "SEG 3 OUTROS"),
+        ("AFASTAMENTO", "Afastamento", "SEG 3 OUTROS"),
+    )
+    for row, category in enumerate(categories, 2):
+        support.append((*category, 400, 600, None, 200, 150, None, None, None, None))
+        support.cell(
+            row, 6, f'=IF(AND(ISNUMBER(D{row}),ISNUMBER(E{row})),D{row}+E{row},"")'
+        )
+        support.cell(
+            row,
+            12,
+            f'=IF(COUNTIFS(ViagensM,A{row},ViagensC,"Cancelada",ViagensN,"")>0,"Pendente",SUMIFS(ViagensK,ViagensM,A{row},ViagensC,"<>Cancelada")+SUMIFS(ViagensK,ViagensM,A{row},ViagensC,"Cancelada",ViagensN,"Sim"))',
+        )
+        if category[0] == "PPGEL +":
+            for column, weight in zip((9, 10, 11), (0.5, 0.25, 0.25), strict=True):
+                support.cell(row, column, weight)
+    summary["B2"] = "RESUMO DE GASTOS"
+    summary.merge_cells("B2:I2")
+    summary["M2"] = date(2026, 1, 1)
+    summary["M2"].number_format = "dd/mm/yyyy"
+    summary["B7"] = "Agronomia"
+    summary["E7"] = '=SUMIF(ApoioA,"AGRONOMIA",ApoioD)'
+    summary["F7"] = '=SUMIF(ApoioA,"AGRONOMIA",ApoioM)'
+    summary["G7"] = '=IF(AND(ISNUMBER(E7),ISNUMBER(F7)),E7-F7,"Pendente")'
+    for sheet, prefix, columns, height_row in (
+        ("APOIO", "Apoio", "ABCDEFGHJKLM", 1),
+        ("BASE VIAGENS", "Viagens", "ABCDEFGHIJKLMNOPQ", 2),
+        ("RESUMO GASTOS", "Resumo", "BCDEFGHIJKLMNOP", 3),
+    ):
+        summary.cell(height_row, 18, f"=MAX(1,COUNTA('{sheet}'!A:A)-1)")
+        for column in columns:
+            actual_column = (
+                {"L": "P", "M": "Q", "N": "R", "O": "L", "P": "M", "Q": "N"}.get(
+                    column, column
+                )
+                if sheet == "BASE VIAGENS"
+                else {"J": "I", "K": "J", "L": "K", "M": "L"}.get(column, column)
+                if sheet == "APOIO"
+                else column
+            )
+            workbook.defined_names.add(
+                DefinedName(
+                    prefix + column,
+                    attr_text=f"OFFSET('{sheet}'!${actual_column}$1,1,0,MAX(1,'RESUMO GASTOS'!$R${height_row}),1)",
+                )
+            )
+    for name, width in (("CodigosDebito", 1), ("ApoioCatalogo", 3)):
+        workbook.defined_names.add(
+            DefinedName(
+                name,
+                attr_text=f"OFFSET('APOIO'!$A$1,1,0,MAX(1,'RESUMO GASTOS'!$R$1),{width})",
+            )
+        )
+    workbook.defined_names.add(DefinedName("SCDPLayoutVersion", attr_text='"9"'))
+    for sheet, name, area in (
+        (base, "tblBaseViagens", "A1:R2"),
+        (support, "tblApoioDebito", "A1:L10"),
+    ):
+        sheet.add_table(Table(displayName=name, ref=area))
+    for formula, area in (
+        ("CodigosDebito", "Q2:Q1048576"),
+        ('"Sim,Não"', "R2:R1048576"),
+    ):
+        validation = DataValidation(type="list", formula1=formula, allow_blank=True)
+        validation.add(area)
+        base.add_data_validation(validation)
+    validation = DataValidation(
+        type="decimal", operator="between", formula1=0, formula2=1, allow_blank=True
+    )
+    validation.add("I2:K10")
+    support.add_data_validation(validation)
+    for sheet in workbook:
+        sheet.column_dimensions["B"].width = 44
+        sheet.row_dimensions[2].height = 28
+        for row in sheet:
+            for cell in row:
+                if cell.__class__.__name__ != "MergedCell":
+                    cell.font = Font(name="Arial", size=10, color="123456")
+                    cell.fill = PatternFill("solid", fgColor="DDEEFF")
+                    cell.alignment = Alignment(horizontal="center")
+    workbook.calculation = CalcProperties(
+        calcMode="auto", fullCalcOnLoad=True, forceFullCalc=True
+    )
+    workbook.save(path)
+    workbook.close()
+
+
 def reference_fixture(path: Path) -> None:
     workbook = Workbook()
     workbook._fonts[0] = Font(name="Arial", size=10)

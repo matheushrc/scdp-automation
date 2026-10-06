@@ -10,6 +10,7 @@ from openpyxl import load_workbook
 
 from scdp_automation import xlsx_output
 from tests.support.workbooks import (
+    final_template_fixture,
     make_trip,
     reference_fixture,
     write_existing_workbook,
@@ -26,7 +27,7 @@ class FidelityTests(unittest.TestCase):
 
     def test_publication_records_the_value_update_date_in_m2(self):
         template = self.root / "template.xlsx"
-        xlsx_output.import_reference_workbook(self.reference, template)
+        final_template_fixture(template)
         output = self.root / "fresh.xlsx"
         updated_at = datetime(2026, 10, 7, 1, 30, tzinfo=ZoneInfo("America/Sao_Paulo"))
         with (
@@ -46,7 +47,7 @@ class FidelityTests(unittest.TestCase):
 
     def test_fresh_extraction_preserves_template_sheets_without_old_trips(self):
         template = self.root / "template.xlsx"
-        xlsx_output.import_reference_workbook(self.reference, template)
+        final_template_fixture(template)
         before = template.read_bytes()
         output = self.root / "fresh.xlsx"
         with patch.object(xlsx_output, "DEFAULT_REFERENCE", template):
@@ -60,6 +61,7 @@ class FidelityTests(unittest.TestCase):
         self.assertEqual(workbook["BASE VIAGENS"]["A2"].value, "888888/26")
         self.assertEqual(workbook["BASE VIAGENS"].max_row, 2)
         self.assertIsNone(workbook["BASE VIAGENS"]["Q2"].value)
+        self.assertEqual(dict(workbook.defined_names), dict(source.defined_names))
         for name in ("APOIO", "RESUMO GASTOS"):
             actual, expected = workbook[name], source[name]
             self.assertEqual(actual.max_row, expected.max_row)
@@ -67,19 +69,42 @@ class FidelityTests(unittest.TestCase):
             self.assertEqual(
                 set(map(str, actual.merged_cells)), set(map(str, expected.merged_cells))
             )
+            self.assertEqual(actual.data_validations, expected.data_validations)
+            self.assertEqual(
+                {
+                    key: (dict(value), value._style)
+                    for key, value in actual.column_dimensions.items()
+                },
+                {
+                    key: (dict(value), value._style)
+                    for key, value in expected.column_dimensions.items()
+                },
+            )
+            self.assertEqual(
+                {
+                    key: (dict(value), value._style)
+                    for key, value in actual.row_dimensions.items()
+                },
+                {
+                    key: (dict(value), value._style)
+                    for key, value in expected.row_dimensions.items()
+                },
+            )
+            self.assertEqual(dict(actual.defined_names), dict(expected.defined_names))
             for row in expected:
                 for cell in row:
                     copied = actual[cell.coordinate]
-                    self.assertEqual(
-                        copied.value, cell.value, f"{name}!{cell.coordinate}"
-                    )
+                    if not (name == "RESUMO GASTOS" and cell.coordinate == "M2"):
+                        self.assertEqual(
+                            copied.value, cell.value, f"{name}!{cell.coordinate}"
+                        )
                     self.assertEqual(
                         copied._style, cell._style, f"{name}!{cell.coordinate}"
                     )
 
     def test_fresh_extraction_does_not_reuse_matching_template_trip_metadata(self):
         template = self.root / "template.xlsx"
-        xlsx_output.import_reference_workbook(self.reference, template)
+        final_template_fixture(template)
         workbook = load_workbook(template)
         workbook["BASE VIAGENS"]["O2"] = "Old template description"
         workbook["BASE VIAGENS"]["N2"] = "Old verification"
@@ -92,6 +117,64 @@ class FidelityTests(unittest.TestCase):
         self.addCleanup(workbook.close)
         for column in ("N", "O", "Q", "R"):
             self.assertIsNone(workbook["BASE VIAGENS"][f"{column}2"].value)
+
+    def test_existing_final_workbook_preserves_manual_sheets_except_m2(self):
+        current, candidate = self.root / "current.xlsx", self.root / "candidate.xlsx"
+        final_template_fixture(current)
+        workbook = load_workbook(current)
+        workbook["BASE VIAGENS"]["A2"] = "999001/26"
+        workbook["BASE VIAGENS"]["Q2"] = "AGRONOMIA"
+        workbook["APOIO"]["D2"] = 12345
+        workbook["RESUMO GASTOS"]["F7"] = "=SUM(1,2)"
+        workbook.save(current)
+        workbook.close()
+        before = current.read_bytes()
+        xlsx_output.build_candidate([make_trip("999001/26")], current, candidate)
+        self.assertEqual(current.read_bytes(), before)
+        source, actual = load_workbook(current), load_workbook(candidate)
+        self.addCleanup(source.close)
+        self.addCleanup(actual.close)
+        self.assertEqual(dict(actual.defined_names), dict(source.defined_names))
+        for name in ("APOIO", "RESUMO GASTOS"):
+            original, refreshed = source[name], actual[name]
+            self.assertEqual(
+                set(map(str, original.merged_cells)),
+                set(map(str, refreshed.merged_cells)),
+            )
+            self.assertEqual(original.data_validations, refreshed.data_validations)
+            self.assertEqual(
+                {
+                    key: (dict(value), value._style)
+                    for key, value in original.row_dimensions.items()
+                },
+                {
+                    key: (dict(value), value._style)
+                    for key, value in refreshed.row_dimensions.items()
+                },
+            )
+            self.assertEqual(
+                {
+                    key: (dict(value), value._style)
+                    for key, value in original.column_dimensions.items()
+                },
+                {
+                    key: (dict(value), value._style)
+                    for key, value in refreshed.column_dimensions.items()
+                },
+            )
+            self.assertEqual(
+                dict(original.defined_names), dict(refreshed.defined_names)
+            )
+            for row in original:
+                for cell in row:
+                    copied = refreshed[cell.coordinate]
+                    if not (name == "RESUMO GASTOS" and cell.coordinate == "M2"):
+                        self.assertEqual(
+                            copied.value, cell.value, f"{name}!{cell.coordinate}"
+                        )
+                    self.assertEqual(
+                        copied._style, cell._style, f"{name}!{cell.coordinate}"
+                    )
 
     def test_existing_generic_workbook_adopts_template_sheets_and_keeps_inputs(self):
         template = self.root / "template.xlsx"

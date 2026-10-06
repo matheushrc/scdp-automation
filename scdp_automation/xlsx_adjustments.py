@@ -322,6 +322,8 @@ def validate_editable_layout(workbook: Workbook) -> None:
         "Total utilizado por categoria (R$)",
     ):
         raise WorkbookValidationError("As colunas de APOIO foram alteradas.")
+    base = workbook["BASE VIAGENS"]
+    debit_column = [cell.value for cell in base[1]].index("Código de débito") + 1
     seen = set()
     for row in range(2, support.max_row + 1):
         code = support.cell(row, 1).value
@@ -351,9 +353,8 @@ def validate_editable_layout(workbook: Workbook) -> None:
         weights = [support.cell(row, col).value for col in weight_columns]
         if code == "PPGEL +":
             required = any(support.cell(row, col).value for col in (4, 5, 7, 8)) or any(
-                workbook["BASE VIAGENS"].cell(r, 16).value == code
-                and workbook["BASE VIAGENS"].cell(r, 11).value
-                for r in range(2, workbook["BASE VIAGENS"].max_row + 1)
+                base.cell(r, debit_column).value == code and base.cell(r, 11).value
+                for r in range(2, base.max_row + 1)
             )
             if (required or any(w is not None for w in weights)) and (
                 any(

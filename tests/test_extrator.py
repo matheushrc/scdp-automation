@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from scdp_automation import xlsx_output
+from scdp_automation.config import current_year
 from scdp_automation.extrator import (
     DEFAULT_OUTPUT,
     collect_pending_descriptions,
@@ -73,7 +74,9 @@ class ExtratorTests(unittest.TestCase):
         with patch("sys.argv", ["scdp-extrair"]):
             args = parse_args()
 
-        self.assertEqual(DEFAULT_OUTPUT, Path("output/viagens_scdp_2026.json"))
+        self.assertEqual(
+            DEFAULT_OUTPUT, Path(f"output/viagens_scdp_{current_year()}.json")
+        )
         self.assertEqual(args.output, DEFAULT_OUTPUT)
 
     def test_report_link_is_resolved_against_authenticated_scdp_page(self) -> None:

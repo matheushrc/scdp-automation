@@ -101,8 +101,14 @@ def write_profile_config(config_path: Path, config: ProfileConfig) -> None:
     normalized_email = _valid_config_email(config.email)
     if not Path(config.source_path).is_absolute() or normalized_email is None:
         raise ProfileSetupError("The selected Chrome profile config is invalid.")
+    from scdp_automation.config import load_extraction_config
+
+    extraction = load_extraction_config(config_path)
     content = (
-        "version = 1\n\n[chrome_profile]\n"
+        "version = 1\n"
+        f"ano = {extraction.ano}\n"
+        "\n"
+        "[chrome_profile]\n"
         f"source_path = {_toml_string(config.source_path)}\n"
         f"email = {_toml_string(normalized_email)}\n"
     )

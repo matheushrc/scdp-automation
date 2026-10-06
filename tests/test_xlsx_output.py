@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from scdp_automation import xlsx_output
+from scdp_automation.config import current_year
 from scdp_automation.relatorio import Viagem
 from scdp_automation.xlsx_output import (
     BASE_HEADERS,
@@ -878,7 +879,7 @@ class WorkbookPublicationTests(unittest.TestCase):
             xlsx_output.DEFAULT_WORKBOOK,
             Path(xlsx_output.__file__).resolve().parents[1]
             / "output"
-            / "gastos_scdp_2026.xlsx",
+            / f"gastos_scdp_{current_year()}.xlsx",
         )
 
     def test_first_publish_creates_workbook_without_backup(self) -> None:

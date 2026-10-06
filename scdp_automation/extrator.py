@@ -17,13 +17,14 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from scdp_automation.autenticacao import authenticate_gov_br, load_credentials
 from scdp_automation.chrome_profile_setup import selected_profile_directory
+from scdp_automation.config import REPO_ROOT, current_year, sync_extraction_config
 from scdp_automation.logging_config import configure_logging
 from scdp_automation.navegador_chrome import connect_visible_chrome
 from scdp_automation.relatorio import Viagem, load_trips, parse_report_rows, save_json
 from scdp_automation.xlsx_output import DEFAULT_WORKBOOK, publish_workbook
 
 SCDP_URL = "https://www2.scdp.gov.br/"
-DEFAULT_OUTPUT = Path("output/viagens_scdp_2026.json")
+DEFAULT_OUTPUT = Path(f"output/viagens_scdp_{current_year()}.json")
 
 
 def resolve_report_url(current_url: str, report_href: str) -> str:
@@ -44,7 +45,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.limite < 0:
         parser.error("--limite não pode ser negativo.")
-    args.output = DEFAULT_OUTPUT
+    config = sync_extraction_config()
+    args.ano = config.ano
+    args.output = Path("output") / config.checkpoint_name
+    args.workbook = REPO_ROOT / "output" / config.nome_planilha
     return args
 
 
@@ -108,7 +112,7 @@ async def select_cch(page: Page) -> None:
         )
 
 
-async def open_annual_cch_report(page: Page) -> None:
+async def open_annual_cch_report(page: Page, year: int | None = None) -> None:
     """Navega aos filtros, escolhe o ano de exercício completo e pesquisa CCH."""
     # O link oficial já existe no DOM; hover depende de frames de animação
     # que o Chrome pode suspender quando a janela fica em segundo plano.
@@ -128,25 +132,26 @@ async def open_annual_cch_report(page: Page) -> None:
     await page.locator("#chkAnoExercicio").wait_for(state="visible")
     await select_cch(page)
 
-    await ensure_annual_period(page)
+    await ensure_annual_period(page, year)
     async with page.expect_navigation(wait_until="domcontentloaded"):
         await page.get_by_role("button", name="Pesquisar", exact=True).click(force=True)
     await find_report_table(page)
     # Mantém o tamanho atual para não disparar outra submissão JSF concorrente.
 
 
-async def ensure_annual_period(page: Page) -> None:
+async def ensure_annual_period(page: Page, year: int | None = None) -> None:
     """Espera as datas anuais; remarcar recupera um checkbox com estado antigo."""
     annual = page.locator("#chkAnoExercicio")
-    condition = r"""() => {
+    year = year or sync_extraction_config().ano
+    condition = r"""year => {
       const start = document.getElementById('dataInicioRelatorio:inputCalendario_input');
       const end = document.getElementById('dataFimRelatorio:inputCalendario_input');
       return document.getElementById('chkAnoExercicio')?.checked
-        && /^01\/01\/\d{4}$/.test(start?.value || '')
-        && end?.value === '31/12/' + start.value.slice(-4);
+        && start?.value === '01/01/' + year
+        && end?.value === '31/12/' + year;
     }"""
     if await annual.is_checked():
-        if await page.evaluate(condition):
+        if await page.evaluate(condition, arg=year):
             return
         old_input = await page.locator(
             '[id="dataInicioRelatorio:inputCalendario_input"]'
@@ -158,7 +163,7 @@ async def ensure_annual_period(page: Page) -> None:
         )
     await annual.check(force=True)
     # Polling por tempo também funciona com o Chrome sem frames de animação.
-    await page.wait_for_function(condition, polling=200, timeout=30_000)
+    await page.wait_for_function(condition, arg=year, polling=200, timeout=30_000)
 
 
 async def listing_numbers(page: Page) -> list[str]:
@@ -380,6 +385,7 @@ async def run(argv: list[str] | None = None) -> None:
     configure_logging()
     args = parse_args(argv)
     output = args.output
+    workbook_path = args.workbook
     previous = {v.numero_da_solicitacao: v for v in load_trips(output)}
 
     async with async_playwright() as playwright:
@@ -420,7 +426,7 @@ async def run(argv: list[str] | None = None) -> None:
         logger.info("Página SCDP carregada no navegador visível.")
         await start_login_if_needed(page)
         await wait_for_login(page)
-        await open_annual_cch_report(page)
+        await open_annual_cch_report(page, args.ano)
 
         logger.info("Coletando todas as páginas do relatório Viagem.")
         trips = await collect_listing(page)
@@ -429,8 +435,8 @@ async def run(argv: list[str] | None = None) -> None:
             if old is not None:
                 trip.descricao_do_motivo_da_viagem = old.descricao_do_motivo_da_viagem
                 trip.data_da_ultima_verificacao = old.data_da_ultima_verificacao
-        backup = save_checkpoint_and_publish(trips, output)
-        logger.info("Workbook de gastos atualizado em {}.", DEFAULT_WORKBOOK.resolve())
+        backup = save_checkpoint_and_publish(trips, output, workbook_path)
+        logger.info("Workbook de gastos atualizado em {}.", workbook_path.resolve())
         if backup is None:
             logger.info("Nenhum backup anterior existia para o workbook.")
         else:
@@ -452,7 +458,7 @@ async def run(argv: list[str] | None = None) -> None:
             len(pending),
         )
         await collect_pending_descriptions(page, trips, pending, output)
-        save_checkpoint_and_publish(trips, output)
+        save_checkpoint_and_publish(trips, output, workbook_path)
         remaining = sum(v.descricao_do_motivo_da_viagem is None for v in trips)
         logger.info("JSON atualizado em {}.", output.resolve())
         logger.info("Descrições pendentes: {}.", remaining)

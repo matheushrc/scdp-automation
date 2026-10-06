@@ -30,6 +30,14 @@ As variáveis `USERNAME` e `PASSWORD` do ambiente também são aceitas quando a 
 
 Na primeira execução, escolha um perfil do Chrome com as setas e Enter; Escape cancela. Feche todas as janelas do Chrome para permitir a cópia do perfil. O sistema cria uma cópia local sem extensões em `.scdp-browser/` e salva a seleção em `.scdp-config.toml`. Nas próximas execuções, essa cópia é reutilizada.
 
+A extração consulta sempre o ano atual, considerando o fuso de São Paulo. Ao iniciar, o sistema atualiza automaticamente o campo `ano` no início de `.scdp-config.toml`, antes da seção `[chrome_profile]`. Exemplo para 2026:
+
+```toml
+ano = 2026
+```
+
+O nome da planilha segue sempre `output/gastos_scdp_{ano}.xlsx`, e o JSON segue `output/viagens_scdp_{ano}.json`. Na virada do ano, o sistema passa a usar os arquivos do novo ano e preserva os anteriores. A seleção do perfil Chrome é preservada.
+
 ## Comandos da CLI
 
 ### Extrair viagens e atualizar a planilha
@@ -130,7 +138,7 @@ Ao adicionar linhas em `BASE VIAGENS` ou `APOIO`, copie uma linha existente para
 
 A extração usa a planilha existente para atualizar `BASE VIAGENS`, preservando os códigos de débito e as decisões de desconto pela PCDP completa, além das entradas de `APOIO` e dos ajustes de `RESUMO GASTOS`. Não é necessário executar um criador de planilha separadamente.
 
-Se a planilha não existir, o sistema cria uma nova. Quando disponível, a referência `input/gastos_scdp_2026.xlsx` fornece o layout ajustado e os preenchimentos iniciais de APOIO e RESUMO GASTOS; o arquivo de referência é somente lido. Essa referência é uma cópia da planilha de saída com BASE VIAGENS vazia, preparada para servir como ponto de partida. Mantenha a planilha ajustada no caminho de saída para que ela seja usada nas próximas atualizações.
+Se a planilha não existir, o sistema cria uma nova. Quando disponível, a referência `input/gastos_scdp_template.xlsx` fornece o layout ajustado e os preenchimentos iniciais de APOIO e RESUMO GASTOS; o arquivo de referência é somente lido. Essa referência é uma cópia da planilha de saída com BASE VIAGENS vazia, preparada para servir como ponto de partida. Mantenha a planilha ajustada no caminho de saída para que ela seja usada nas próximas atualizações.
 
 Antes de substituir uma planilha existente, o sistema valida a atualização e cria um backup com data e hora em `output/`. Se a nova listagem não contiver alguma PCDP já publicada, a atualização é interrompida para permitir a conferência, preservando a planilha anterior.
 

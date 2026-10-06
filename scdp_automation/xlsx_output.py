@@ -23,6 +23,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.worksheet import Worksheet
 
+from scdp_automation.config import current_year
 from scdp_automation.relatorio import Viagem
 from scdp_automation.xlsx_models import (
     DEBIT_CATEGORIES,
@@ -34,14 +35,16 @@ from scdp_automation.xlsx_models import (
 __all__ = ["DEBIT_CATEGORIES", "DebitCategory", "TripSummary", "summarize_trips"]
 
 DEFAULT_WORKBOOK = (
-    Path(__file__).resolve().parents[1] / "output" / "gastos_scdp_2026.xlsx"
+    Path(__file__).resolve().parents[1]
+    / "output"
+    / f"gastos_scdp_{current_year()}.xlsx"
 )
 
 _CHECKOUT = Path(__file__).resolve().parents[1]
 _REFERENCE_ROOT = (
     _CHECKOUT.parent.parent if _CHECKOUT.parent.name == ".worktrees" else _CHECKOUT
 )
-DEFAULT_REFERENCE = _REFERENCE_ROOT / "input" / "gastos_scdp_2026.xlsx"
+DEFAULT_REFERENCE = _REFERENCE_ROOT / "input" / "gastos_scdp_template.xlsx"
 
 
 LEGACY_BASE_HEADERS = (

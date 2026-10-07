@@ -156,7 +156,6 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "viagens.json"
             relatorio.save_json(path, [trip])
-            self.assertEqual(relatorio.load_completed(path), set())
             trip.descricao_do_motivo_da_viagem = "Primeira linha\nSegunda linha"
             relatorio.save_json(path, [trip])
             data = json.loads(path.read_text())
@@ -165,7 +164,6 @@ class ReportTests(unittest.TestCase):
                 data[0]["descricao_do_motivo_da_viagem"],
                 "Primeira linha\nSegunda linha",
             )
-            self.assertEqual(relatorio.load_completed(path), {"999999/26"})
             self.assertFalse(path.with_suffix(".csv").exists())
             self.assertEqual(list(Path(tmp).iterdir()), [path])
 
@@ -195,4 +193,4 @@ class ReportTests(unittest.TestCase):
             path = Path(tmp) / "viagens.json"
             path.write_text('[{"numero_da_solicitacao":"999999/26"}]')
             with self.assertRaises(ValidationError):
-                relatorio.load_completed(path)
+                relatorio.load_trips(path)

@@ -172,14 +172,6 @@ def load_trips(output: Path) -> list[Viagem]:
     return TRIPS.validate_json(output.read_text(encoding="utf-8"))
 
 
-def load_completed(output: Path) -> set[str]:
-    return {
-        v.numero_da_solicitacao
-        for v in load_trips(output)
-        if v.descricao_do_motivo_da_viagem is not None
-    }
-
-
 def save_json(output: Path, trips: list[Viagem]) -> None:
     """Grava o checkpoint JSON atomicamente após validar todos os registros."""
     validated = TRIPS.validate_python([trip.model_dump() for trip in trips])

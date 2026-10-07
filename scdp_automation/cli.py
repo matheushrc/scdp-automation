@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from pathlib import Path
 from urllib.parse import urlsplit
 
 from playwright.async_api import async_playwright
@@ -14,6 +13,7 @@ from scdp_automation.chrome_profiles import (
     ChromeProfileError,
     ProfileSelectionCancelled,
 )
+from scdp_automation.config import REPO_ROOT
 from scdp_automation.extrator import (
     parse_args,
     run,
@@ -21,7 +21,7 @@ from scdp_automation.extrator import (
     wait_for_login,
 )
 from scdp_automation.logging_config import configure_logging, logger
-from scdp_automation.navegador_chrome import connect_visible_chrome
+from scdp_automation.navegador_chrome import connect_visible_chrome, select_scdp_page
 
 SCDP_URL = "https://www2.scdp.gov.br/"
 
@@ -29,11 +29,10 @@ SCDP_URL = "https://www2.scdp.gov.br/"
 async def open_browser() -> None:
     """Abre o Chrome headed usando somente o perfil local do projeto."""
     configure_logging()
-    profile = Path(__file__).resolve().parents[1] / ".scdp-browser"
+    profile = REPO_ROOT / ".scdp-browser"
     async with async_playwright() as playwright:
         browser = await connect_visible_chrome(playwright, profile)
-        context = browser.contexts[0]
-        page = context.pages[0] if context.pages else await context.new_page()
+        page = await select_scdp_page(browser)
         if urlsplit(page.url).hostname != "www2.scdp.gov.br":
             await page.goto(SCDP_URL, wait_until="domcontentloaded")
         await page.bring_to_front()
@@ -45,22 +44,10 @@ async def open_browser() -> None:
 async def login_only() -> None:
     """Autentica no gov.br e retorna ao SCDP sem iniciar a extração."""
     configure_logging()
-    profile = Path(__file__).resolve().parents[1] / ".scdp-browser"
+    profile = REPO_ROOT / ".scdp-browser"
     async with async_playwright() as playwright:
         browser = await connect_visible_chrome(playwright, profile)
-        if not browser.contexts:
-            raise RuntimeError("O Chrome conectado não expôs um contexto padrão.")
-        context = browser.contexts[0]
-        pages = context.pages
-        page = next(
-            (
-                candidate
-                for candidate in pages
-                if urlsplit(candidate.url).hostname
-                in {"www2.scdp.gov.br", "sso.acesso.gov.br", "acesso.gov.br"}
-            ),
-            pages[0] if pages else await context.new_page(),
-        )
+        page = await select_scdp_page(browser)
         await page.bring_to_front()
         if urlsplit(page.url).hostname not in {
             "www2.scdp.gov.br",
@@ -84,7 +71,7 @@ def main(argv: list[str] | None = None) -> None:
     known, extraction_args = parser.parse_known_args(argv)
     if "-h" in extraction_args or "--help" in extraction_args:
         parse_args(extraction_args)
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = REPO_ROOT
     try:
         prepare_chrome_profile(repo_root, force_reselect=known.selecionar_perfil_chrome)
     except ProfileSelectionCancelled as exc:

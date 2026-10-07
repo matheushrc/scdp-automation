@@ -16,7 +16,7 @@ from openpyxl.styles import PatternFill
 from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.worksheet.worksheet import Worksheet
 
-from scdp_automation.config import current_year
+from scdp_automation.config import REPO_ROOT
 from scdp_automation.relatorio import Viagem
 from scdp_automation.xlsx_models import TripSummary, summarize_trips
 from scdp_automation.xlsx_validation import (
@@ -26,16 +26,7 @@ from scdp_automation.xlsx_validation import (
     validate_workbook,
 )
 
-DEFAULT_WORKBOOK = (
-    Path(__file__).resolve().parents[1]
-    / "output"
-    / f"gastos_scdp_{current_year()}.xlsx"
-)
-_CHECKOUT = Path(__file__).resolve().parents[1]
-_TEMPLATE_ROOT = (
-    _CHECKOUT.parent.parent if _CHECKOUT.parent.name == ".worktrees" else _CHECKOUT
-)
-DEFAULT_TEMPLATE = _TEMPLATE_ROOT / "input" / "gastos_scdp_template.xlsx"
+DEFAULT_TEMPLATE = REPO_ROOT / "input" / "gastos_scdp_template.xlsx"
 BASE_TABLE_NAME = "tblBaseViagens"
 
 
@@ -286,7 +277,7 @@ def _candidate_path_for(workbook_path: Path) -> Path:
 
 def publish_workbook(
     trips: Sequence[Viagem],
-    workbook_path: Path = DEFAULT_WORKBOOK,
+    workbook_path: Path,
     *,
     template_path: Path | None = None,
 ) -> None:

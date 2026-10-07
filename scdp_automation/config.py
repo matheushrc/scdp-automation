@@ -7,7 +7,7 @@ import re
 import tempfile
 import tomllib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -28,8 +28,12 @@ class ExtractionConfig:
         return f"viagens_scdp_{self.ano}.json"
 
 
+def current_date() -> date:
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+
+
 def current_year() -> int:
-    return datetime.now(ZoneInfo("America/Sao_Paulo")).year
+    return current_date().year
 
 
 def load_extraction_config(path: Path = CONFIG_PATH) -> ExtractionConfig:
@@ -52,7 +56,7 @@ def sync_extraction_config(
     path: Path = CONFIG_PATH, *, current_year: int | None = None
 ) -> ExtractionConfig:
     """Record the current year while preserving the selected Chrome profile."""
-    year = current_year or datetime.now(ZoneInfo("America/Sao_Paulo")).year
+    year = current_year or current_date().year
     load_extraction_config(path)
     content = path.read_text(encoding="utf-8") if path.exists() else "version = 1\n"
     config = ExtractionConfig(year)

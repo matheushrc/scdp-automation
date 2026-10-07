@@ -5,10 +5,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import re
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
-from zoneinfo import ZoneInfo
 
 from loguru import logger
 from playwright.async_api import Error as PlaywrightError
@@ -17,15 +16,14 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from scdp_automation.autenticacao import authenticate_gov_br, load_credentials
 from scdp_automation.chrome_profile_setup import selected_profile_directory
-from scdp_automation.config import REPO_ROOT, current_year, sync_extraction_config
+from scdp_automation.config import REPO_ROOT, current_date, sync_extraction_config
 from scdp_automation.logging_config import configure_logging
-from scdp_automation.navegador_chrome import connect_visible_chrome
+from scdp_automation.navegador_chrome import connect_visible_chrome, select_scdp_page
 from scdp_automation.output_history import OutputHistory
 from scdp_automation.relatorio import Viagem, load_trips, parse_report_rows, save_json
-from scdp_automation.xlsx_output import DEFAULT_WORKBOOK, publish_workbook
+from scdp_automation.xlsx_output import publish_workbook
 
 SCDP_URL = "https://www2.scdp.gov.br/"
-DEFAULT_OUTPUT = Path(f"output/viagens_scdp_{current_year()}.json")
 
 
 def resolve_report_url(current_url: str, report_href: str) -> str:
@@ -48,7 +46,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--limite não pode ser negativo.")
     config = sync_extraction_config()
     args.ano = config.ano
-    args.output = Path("output") / config.checkpoint_name
+    args.output = REPO_ROOT / "output" / config.checkpoint_name
     args.workbook = REPO_ROOT / "output" / config.nome_planilha
     return args
 
@@ -274,26 +272,6 @@ async def _consult_trip_reason(page: Page, number: str) -> str:
     return (await description.inner_text()).strip()
 
 
-def extract_description(detail_text: str) -> str:
-    """Extrai o conteúdo visível logo após o rótulo da descrição, se presente."""
-    lines = [line.strip() for line in detail_text.splitlines() if line.strip()]
-    labels = (
-        "Descrição do Motivo da Viagem",
-        "Descrição do motivo da viagem",
-        "Descrição/Justificativa",
-    )
-    for index, line in enumerate(lines):
-        normalized = re.sub(r"\s+", " ", line).strip()
-        for label in labels:
-            if normalized.casefold().startswith(label.casefold()):
-                remainder = normalized[len(label) :].lstrip(" :")
-                if remainder:
-                    return remainder
-                if index + 1 < len(lines):
-                    return lines[index + 1]
-    return ""
-
-
 async def start_login_if_needed(page: Page) -> None:
     """Inicia o login gov.br se necessário e preenche credenciais locais."""
     if urlsplit(page.url).hostname in {"sso.acesso.gov.br", "acesso.gov.br"}:
@@ -358,24 +336,20 @@ async def collect_pending_descriptions(
     output: Path,
 ) -> None:
     """Consulta descrições em série e salva cada checkpoint."""
-    query_lock = asyncio.Lock()
     for index, trip in enumerate(pending, start=1):
-        async with query_lock:
-            await page.bring_to_front()
-            trip.descricao_do_motivo_da_viagem = await _consult_with_safe_failure(
-                page, trip.numero_da_solicitacao, index, len(pending)
-            )
-            trip.data_da_ultima_verificacao = datetime.now(
-                ZoneInfo("America/Sao_Paulo")
-            ).date()
-            save_json(output, trips)
-            logger.info("Descrição {} de {} gravada.", index, len(pending))
+        await page.bring_to_front()
+        trip.descricao_do_motivo_da_viagem = await _consult_with_safe_failure(
+            page, trip.numero_da_solicitacao, index, len(pending)
+        )
+        trip.data_da_ultima_verificacao = current_date()
+        save_json(output, trips)
+        logger.info("Descrição {} de {} gravada.", index, len(pending))
 
 
 def save_checkpoint_and_publish(
     trips: list[Viagem],
     checkpoint_path: Path,
-    workbook_path: Path = DEFAULT_WORKBOOK,
+    workbook_path: Path,
     *,
     history: OutputHistory,
 ) -> Path | None:
@@ -397,7 +371,7 @@ async def run(argv: list[str] | None = None) -> None:
 
         async with async_playwright() as playwright:
             # Todas as abas usam o mesmo perfil Chrome e a mesma sessão autenticada.
-            user_data_dir = Path(__file__).resolve().parents[1] / ".scdp-browser"
+            user_data_dir = REPO_ROOT / ".scdp-browser"
             profile_directory = selected_profile_directory(user_data_dir)
             if (
                 not (user_data_dir / profile_directory).is_dir()
@@ -409,19 +383,7 @@ async def run(argv: list[str] | None = None) -> None:
                 )
             logger.info("Abrindo ou conectando ao Chrome visível.")
             browser = await connect_visible_chrome(playwright, user_data_dir)
-            if not browser.contexts:
-                raise RuntimeError("O Chrome conectado não expôs um contexto padrão.")
-            context = browser.contexts[0]
-            pages = context.pages
-            page = next(
-                (
-                    candidate
-                    for candidate in pages
-                    if urlsplit(candidate.url).hostname
-                    in {"www2.scdp.gov.br", "sso.acesso.gov.br", "acesso.gov.br"}
-                ),
-                pages[0] if pages else await context.new_page(),
-            )
+            page = await select_scdp_page(browser)
             await page.bring_to_front()
             if page.url == "about:blank" or urlsplit(page.url).hostname not in {
                 "www2.scdp.gov.br",
@@ -456,13 +418,7 @@ async def run(argv: list[str] | None = None) -> None:
                 "Classifique PCDPs sem código na última coluna de BASE VIAGENS e "
                 "preencha as alocações anuais em APOIO."
             )
-            pending = [
-                v
-                for v in trips
-                if needs_verification(
-                    v, datetime.now(ZoneInfo("America/Sao_Paulo")).date()
-                )
-            ]
+            pending = [v for v in trips if needs_verification(v, current_date())]
             if args.limite:
                 pending = pending[: args.limite]
             logger.info(

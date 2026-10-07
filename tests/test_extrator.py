@@ -5,18 +5,18 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from scdp_automation import xlsx_output
-from scdp_automation.config import current_year
+from scdp_automation.config import REPO_ROOT, current_year
 from scdp_automation.extrator import (
-    DEFAULT_OUTPUT,
     collect_pending_descriptions,
-    extract_description,
-    parse_args,
     resolve_report_url,
     run,
     save_checkpoint_and_publish,
 )
 from scdp_automation.output_history import OutputHistory
 from scdp_automation.relatorio import Viagem, load_trips, save_json
+
+OUTPUT_PATH = REPO_ROOT / "output" / f"viagens_scdp_{current_year()}.json"
+WORKBOOK_PATH = REPO_ROOT / "output" / f"gastos_scdp_{current_year()}.xlsx"
 
 
 def make_valid_trip(
@@ -67,19 +67,6 @@ def make_valid_trip(
 
 
 class ExtratorTests(unittest.TestCase):
-    def test_extract_description_from_label_on_separate_line(self) -> None:
-        text = "Solicitação\nDescrição do Motivo da Viagem\nParticipação em reunião"
-        self.assertEqual(extract_description(text), "Participação em reunião")
-
-    def test_output_path_is_fixed_to_json_checkpoint(self) -> None:
-        with patch("sys.argv", ["scdp-extrair"]):
-            args = parse_args()
-
-        self.assertEqual(
-            DEFAULT_OUTPUT, Path(f"output/viagens_scdp_{current_year()}.json")
-        )
-        self.assertEqual(args.output, DEFAULT_OUTPUT)
-
     def test_report_link_is_resolved_against_authenticated_scdp_page(self) -> None:
         report_url = resolve_report_url(
             "https://www2.scdp.gov.br/novoscdp/home.xhtml",
@@ -438,7 +425,7 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         playwright_manager = MagicMock()
         playwright_manager.__aenter__ = AsyncMock(return_value=object())
         playwright_manager.__aexit__ = AsyncMock(return_value=False)
-        session = OutputHistory(DEFAULT_OUTPUT, xlsx_output.DEFAULT_WORKBOOK)
+        session = OutputHistory(OUTPUT_PATH, WORKBOOK_PATH)
         observed = []
 
         def check_session(stage):
@@ -554,8 +541,8 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(workbook_publisher.call_count, 2)
-        workbook_publisher.assert_called_with(trips, xlsx_output.DEFAULT_WORKBOOK)
-        pending.assert_awaited_once_with(page, trips, [trips[0]], DEFAULT_OUTPUT)
+        workbook_publisher.assert_called_with(trips, WORKBOOK_PATH)
+        pending.assert_awaited_once_with(page, trips, [trips[0]], OUTPUT_PATH)
 
     async def test_classification_reminder_has_no_trip_data(self) -> None:
         secrets = ("000999/26", "NOME_PRIVADO_TESTE", "DESCRICAO_PRIVADA_TESTE")
@@ -567,13 +554,13 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(workbook_publisher.call_count, 2)
-        workbook_publisher.assert_called_with([trip], xlsx_output.DEFAULT_WORKBOOK)
+        workbook_publisher.assert_called_with([trip], WORKBOOK_PATH)
         log_calls = repr(logger_info.call_args_list)
         for secret in secrets:
             self.assertNotIn(secret, log_calls)
         self.assertIn("BASE VIAGENS", log_calls)
         self.assertIn("APOIO", log_calls)
-        self.assertIn(str(xlsx_output.DEFAULT_WORKBOOK.resolve()), log_calls)
+        self.assertIn(str(WORKBOOK_PATH.resolve()), log_calls)
         self.assertIn(str(backup.resolve()), log_calls)
 
 

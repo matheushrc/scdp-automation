@@ -14,11 +14,28 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.async_api import Browser, Playwright
+from playwright.async_api import Browser, Page, Playwright
 
 from scdp_automation.chrome_profile_setup import selected_profile_directory
 
 SCDP_URL = "https://www2.scdp.gov.br/"
+
+
+async def select_scdp_page(browser: Browser) -> Page:
+    """Reuse the authenticated tab without navigating or adding spare tabs."""
+    if not browser.contexts:
+        raise RuntimeError("O Chrome conectado não expôs um contexto padrão.")
+    context = browser.contexts[0]
+    for page in context.pages:
+        if urlsplit(page.url).hostname in {
+            "www2.scdp.gov.br",
+            "sso.acesso.gov.br",
+            "acesso.gov.br",
+        }:
+            return page
+    if context.pages:
+        return context.pages[0]
+    return await context.new_page()
 
 
 def _free_local_port() -> int:

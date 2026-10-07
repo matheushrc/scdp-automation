@@ -7,8 +7,10 @@ from pathlib import Path
 
 from loguru import logger
 
+from scdp_automation.config import REPO_ROOT
 
-def configure_logging(log_directory: Path = Path("logs/scdp")) -> None:
+
+def configure_logging(log_directory: Path = REPO_ROOT / "logs" / "scdp") -> None:
     """Configure logs diários com retenção de 30 dias no diretório do projeto."""
     log_directory.mkdir(parents=True, exist_ok=True)
     logger.remove()

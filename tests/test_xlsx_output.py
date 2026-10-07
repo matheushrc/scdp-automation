@@ -5,7 +5,6 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from scdp_automation import xlsx_output
-from scdp_automation.config import current_year
 from scdp_automation.xlsx_models import TripSummary, summarize_trips
 from scdp_automation.xlsx_output import build_candidate, publish_workbook
 from scdp_automation.xlsx_validation import WorkbookValidationError
@@ -245,14 +244,6 @@ class WorkbookRefreshTests(unittest.TestCase):
 
 class WorkbookPublicationTests(unittest.TestCase):
     setUp = workbook_set_up
-
-    def test_default_workbook_path_is_checkout_relative(self) -> None:
-        self.assertEqual(
-            xlsx_output.DEFAULT_WORKBOOK,
-            Path(xlsx_output.__file__).resolve().parents[1]
-            / "output"
-            / f"gastos_scdp_{current_year()}.xlsx",
-        )
 
     def test_first_publish_creates_workbook_without_backup(self) -> None:
         with TemporaryDirectory() as directory:

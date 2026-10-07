@@ -12,7 +12,10 @@ from scdp_automation.xlsx_manual import (
     read_base_manual_values,
 )
 from scdp_automation.xlsx_output import publish_workbook, validate_workbook_sources
-from scdp_automation.xlsx_validation import WorkbookValidationError
+from scdp_automation.xlsx_validation import (
+    WorkbookValidationError,
+    validate_checkpoint_allocations,
+)
 
 
 def prepare_checkpoint_trips(
@@ -51,6 +54,7 @@ def prepare_checkpoint_trips(
                     f"JSON, PCDP {trip.numero_da_solicitacao}: código de débito "
                     f"desconhecido em APOIO: {trip.codigo_de_debito}."
                 )
+        validate_checkpoint_allocations(workbook, prepared)
         return prepared
     finally:
         workbook.close()

@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from scdp_automation.relatorio import Viagem
     from scdp_automation.xlsx_manual import ManualValues
 
 from openpyxl.formula.tokenizer import Tokenizer
 from openpyxl.utils.cell import column_index_from_string, range_boundaries
 from openpyxl.workbook.workbook import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
 BASE_HEADERS = (
     "PCDP",
@@ -247,9 +249,8 @@ def _validate_contract(
                 raise WorkbookValidationError(
                     "Orçamento e transporte em APOIO precisam de valor numérico."
                 )
-        weights = [support.cell(row, col).value for col in (8, 9, 10)]
         if code == "PPGEL +":
-            required = any(support.cell(row, col).value for col in (4, 5, 7)) or any(
+            has_expense = any(
                 (
                     manual_values[
                         str(base.cell(r, pcdp_column).value).strip()
@@ -263,19 +264,7 @@ def _validate_contract(
                 and base.cell(r, total_column).value
                 for r in range(2, base.max_row + 1)
             )
-            if (required or any(w is not None for w in weights)) and (
-                any(
-                    isinstance(w, bool)
-                    or not isinstance(w, (int, float))
-                    or not math.isfinite(w)
-                    or not 0 <= w <= 1
-                    for w in weights
-                )
-                or not math.isclose(sum(weights), 1, rel_tol=0, abs_tol=1e-10)
-            ):
-                raise WorkbookValidationError(
-                    "O rateio PPGEL + precisa totalizar 100%."
-                )
+            _validate_rateio(support, row, has_expense=has_expense)
     seen_pcdps: set[str] = set()
     for row in range(2, base.max_row + 1):
         pcdp = base.cell(row, pcdp_column).value
@@ -475,6 +464,36 @@ def _validate_manual_references(workbook: Workbook) -> None:
             for rule in sheet.conditional_formatting[area]:
                 for formula in rule.formula or []:
                     check(formula, f"{sheet.title}: formatação {area.sqref}")
+
+
+def _validate_rateio(support: Worksheet, row: int, *, has_expense: bool) -> None:
+    """Apply the same allocation requirement to worksheet and checkpoint expenses."""
+    weights = [support.cell(row, col).value for col in (8, 9, 10)]
+    required = has_expense or any(support.cell(row, col).value for col in (4, 5, 7))
+    if (required or any(w is not None for w in weights)) and (
+        any(
+            isinstance(w, bool)
+            or not isinstance(w, (int, float))
+            or not math.isfinite(w)
+            or not 0 <= w <= 1
+            for w in weights
+        )
+        or not math.isclose(sum(weights), 1, rel_tol=0, abs_tol=1e-10)
+    ):
+        raise WorkbookValidationError("O rateio PPGEL + precisa totalizar 100%.")
+
+
+def validate_checkpoint_allocations(
+    workbook: Workbook, trips: Sequence[Viagem]
+) -> None:
+    """Validate prepared existing JSON expenses against the preserved support sheet."""
+    support = workbook["APOIO"]
+    has_expense = any(
+        trip.codigo_de_debito == "PPGEL +" and trip.total_da_viagem_r for trip in trips
+    )
+    for row in range(2, support.max_row + 1):
+        if support.cell(row, 1).value == "PPGEL +":
+            _validate_rateio(support, row, has_expense=has_expense)
 
 
 def validate_preserved_sheets(

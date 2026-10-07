@@ -301,6 +301,73 @@ class WorkbookRecoveryTests(unittest.IsolatedAsyncioTestCase):
             workbook_recovery.recreate_workbook(self.checkpoint, self.workbook)
         self.assertEqual(load_trips(self.checkpoint), self.trips)
 
+    def clear_rateio(self, path):
+        book = load_workbook(path)
+        for row in range(2, book["APOIO"].max_row + 1):
+            if book["APOIO"].cell(row, 1).value == "PPGEL +":
+                for column in (4, 5, 7):
+                    book["APOIO"].cell(row, column).value = 0
+                for column in (8, 9, 10):
+                    book["APOIO"].cell(row, column).value = None
+        book.save(path)
+        book.close()
+
+    def test_existing_checkpoint_expense_requires_rateio_before_any_write(self):
+        for existing_output in (False, True):
+            with self.subTest(existing_output=existing_output):
+                final_template_fixture(self.template)
+                self.workbook.unlink(missing_ok=True)
+                xlsx_output.publish_workbook(self.trips, self.workbook)
+                trips = [trip.model_copy() for trip in self.trips]
+                if existing_output:
+                    # This checkpoint-only trip has no row in the old BASE.
+                    extra = make_trip("999999/26")
+                    extra.codigo_de_debito = "PPGEL +"
+                    trips.append(extra)
+                    self.clear_rateio(self.workbook)
+                else:
+                    self.workbook.unlink()
+                    trips[0].codigo_de_debito = "PPGEL +"
+                    self.clear_rateio(self.template)
+                save_json(self.checkpoint, trips)
+                # Noncanonical whitespace detects even a needless JSON rewrite.
+                self.checkpoint.write_text("\n" + self.checkpoint.read_text() + "\n")
+                before = self.snapshot()
+                with self.assertRaisesRegex(WorkbookValidationError, "rateio"):
+                    workbook_recovery.prepare_checkpoint_trips(
+                        self.checkpoint, self.workbook, require_checkpoint=True
+                    )
+                self.assertEqual(self.snapshot(), before)
+                with self.assertRaisesRegex(WorkbookValidationError, "rateio"):
+                    workbook_recovery.recreate_workbook(self.checkpoint, self.workbook)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_existing_checkpoint_expense_with_valid_rateio_recovers(self):
+        self.workbook.unlink()
+        self.trips[0].codigo_de_debito = "PPGEL +"
+        save_json(self.checkpoint, self.trips)
+        before = self.snapshot()
+        prepared = workbook_recovery.prepare_checkpoint_trips(
+            self.checkpoint, self.workbook, require_checkpoint=True
+        )
+        self.assertEqual(prepared, self.trips)
+        self.assertEqual(self.snapshot(), before)
+        workbook_recovery.recreate_workbook(self.checkpoint, self.workbook)
+        self.assertEqual(load_trips(self.checkpoint), self.trips)
+
+    def test_explicit_manual_code_clear_removes_checkpoint_rateio_trigger(self):
+        self.trips[0].codigo_de_debito = "PPGEL +"
+        save_json(self.checkpoint, self.trips)
+        self.clear_rateio(self.workbook)
+        before = self.snapshot()
+        prepared = workbook_recovery.prepare_checkpoint_trips(
+            self.checkpoint, self.workbook, require_checkpoint=True
+        )
+        self.assertIsNone(prepared[0].codigo_de_debito)
+        self.assertEqual(self.snapshot(), before)
+        workbook_recovery.recreate_workbook(self.checkpoint, self.workbook)
+        self.assertIsNone(load_trips(self.checkpoint)[0].codigo_de_debito)
+
     def test_missing_checkpoint_never_creates_empty_workbook(self):
         self.checkpoint.unlink()
         self.workbook.unlink()

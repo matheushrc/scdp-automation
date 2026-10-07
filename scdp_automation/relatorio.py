@@ -7,11 +7,19 @@ import os
 import re
 import tempfile
 import unicodedata
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated, Literal, TypedDict
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StrictStr,
+    TypeAdapter,
+)
 from pydantic_core import PydanticCustomError
 
 
@@ -65,6 +73,13 @@ class Trecho(SubTotal):
 PCDP_PATTERN = r"^\d{6}/\d{2}(?:-\d+[A-Z]+)?$"
 
 
+def optional_manual_text(value: object) -> object:
+    """Normaliza células manuais vazias sem converter tipos não textuais."""
+    if isinstance(value, str):
+        return value.strip() or None
+    return value
+
+
 class Viagem(Model):
     numero_da_solicitacao: str = Field(pattern=PCDP_PATTERN)
     nome_do_proposto: str = Field(min_length=1)
@@ -83,6 +98,12 @@ class Viagem(Model):
     total_da_viagem_r: Number
     descricao_do_motivo_da_viagem: str | None = None
     data_da_ultima_verificacao: date | None = None
+    codigo_de_debito: Annotated[
+        StrictStr | None, BeforeValidator(optional_manual_text)
+    ] = None
+    descontar_do_curso: Annotated[
+        Literal["Sim", "Não"] | None, BeforeValidator(optional_manual_text)
+    ] = None
 
     @property
     def data_inicio(self) -> date:
@@ -93,6 +114,31 @@ class Viagem(Model):
         return max(
             date(*map(int, reversed(t.termino.split("/")))) for t in self.trechos
         )
+
+
+def merge_persisted_trip_fields(
+    trips: Sequence[Viagem], previous: Sequence[Viagem]
+) -> list[Viagem]:
+    """Transfere campos persistidos por PCDP completa, sem alterar as entradas."""
+    for records in (trips, previous):
+        keys = [trip.numero_da_solicitacao for trip in records]
+        if len(keys) != len(set(keys)):
+            raise ValueError("PCDP duplicada na transferência de campos persistidos.")
+    persisted = {trip.numero_da_solicitacao: trip for trip in previous}
+    fields = (
+        "descricao_do_motivo_da_viagem",
+        "data_da_ultima_verificacao",
+        "codigo_de_debito",
+        "descontar_do_curso",
+    )
+    return [
+        trip.model_copy(
+            update={name: getattr(old, name) for name in fields}
+            if (old := persisted.get(trip.numero_da_solicitacao)) is not None
+            else {}
+        )
+        for trip in trips
+    ]
 
 
 class Cell(TypedDict):

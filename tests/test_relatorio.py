@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -102,6 +103,132 @@ def sample_rows() -> list[list[relatorio.Cell]]:
 
 
 class ReportTests(unittest.TestCase):
+    def test_old_checkpoint_defaults_manual_fields(self) -> None:
+        data = relatorio.parse_report_rows(sample_rows())[0].model_dump(mode="json")
+        data.pop("codigo_de_debito", None)
+        data.pop("descontar_do_curso", None)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "viagens.json"
+            path.write_text(json.dumps([data]), encoding="utf-8")
+            trip = relatorio.load_trips(path)[0]
+        self.assertIsNone(trip.codigo_de_debito)
+        self.assertIsNone(trip.descontar_do_curso)
+
+    def test_manual_fields_round_trip(self) -> None:
+        data = relatorio.parse_report_rows(sample_rows())[0].model_dump()
+        trip = relatorio.Viagem.model_validate(
+            {
+                **data,
+                "codigo_de_debito": " AGRONOMIA ",
+                "descontar_do_curso": "Sim",
+                "descricao_do_motivo_da_viagem": "Descrição preservada",
+                "data_da_ultima_verificacao": date(2026, 10, 7),
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "viagens.json"
+            relatorio.save_json(path, [trip])
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertIsInstance(payload, list)
+            self.assertEqual(payload[0]["codigo_de_debito"], "AGRONOMIA")
+            self.assertEqual(payload[0]["descontar_do_curso"], "Sim")
+            loaded = relatorio.load_trips(path)[0]
+        self.assertEqual(loaded, trip)
+        self.assertEqual(loaded.descricao_do_motivo_da_viagem, "Descrição preservada")
+        self.assertEqual(loaded.data_da_ultima_verificacao, date(2026, 10, 7))
+        for value, expected in (("Não", "Não"), ("", None), ("  ", None), (None, None)):
+            with self.subTest(value=value):
+                normalized = relatorio.Viagem.model_validate(
+                    {
+                        **data,
+                        "codigo_de_debito": "  ",
+                        "descontar_do_curso": value,
+                    }
+                )
+                self.assertIsNone(normalized.codigo_de_debito)
+                self.assertEqual(normalized.descontar_do_curso, expected)
+
+    def test_manual_fields_reject_invalid_values(self) -> None:
+        data = relatorio.parse_report_rows(sample_rows())[0].model_dump()
+        for field, invalid in (
+            ("codigo_de_debito", 123),
+            ("codigo_de_debito", True),
+            ("descontar_do_curso", "talvez"),
+            ("descontar_do_curso", True),
+            ("descontar_do_curso", '=IF(A1,"Sim","Não")'),
+        ):
+            with (
+                self.subTest(field=field, value=invalid),
+                self.assertRaises(ValidationError),
+            ):
+                relatorio.Viagem.model_validate({**data, field: invalid})
+
+    def test_merge_persisted_fields_by_full_pcdp(self) -> None:
+        self.assertTrue(
+            callable(getattr(relatorio, "merge_persisted_trip_fields", None))
+        )
+        data = relatorio.parse_report_rows(sample_rows())[0].model_dump()
+        previous = [
+            relatorio.Viagem.model_validate(
+                {
+                    **data,
+                    "numero_da_solicitacao": pcdp,
+                    "codigo_de_debito": code,
+                    "descontar_do_curso": decision,
+                    "descricao_do_motivo_da_viagem": description,
+                    "data_da_ultima_verificacao": verified,
+                    "total_da_viagem_r": 1.0,
+                }
+            )
+            for pcdp, code, decision, description, verified in (
+                ("000001/26", "AGRONOMIA", "Sim", "Original", date(2026, 10, 1)),
+                ("000001/26-1C", "PPGE", "Não", "Complementar", date(2026, 10, 2)),
+            )
+        ]
+        trips = [
+            relatorio.Viagem.model_validate({**data, "numero_da_solicitacao": pcdp})
+            for pcdp in ("000001/26-1C", "000001/26", "000002/26")
+        ]
+        before = [trip.model_dump() for trip in trips]
+        old_before = [trip.model_dump() for trip in previous]
+        merged = relatorio.merge_persisted_trip_fields(trips, previous)
+        self.assertEqual(
+            [trip.numero_da_solicitacao for trip in merged],
+            ["000001/26-1C", "000001/26", "000002/26"],
+        )
+        self.assertEqual(
+            [
+                (
+                    trip.codigo_de_debito,
+                    trip.descontar_do_curso,
+                    trip.descricao_do_motivo_da_viagem,
+                    trip.data_da_ultima_verificacao,
+                )
+                for trip in merged
+            ],
+            [
+                ("PPGE", "Não", "Complementar", date(2026, 10, 2)),
+                ("AGRONOMIA", "Sim", "Original", date(2026, 10, 1)),
+                (None, None, None, None),
+            ],
+        )
+        self.assertEqual([trip.total_da_viagem_r for trip in merged], [1439.56] * 3)
+        self.assertEqual([trip.model_dump() for trip in trips], before)
+        self.assertEqual([trip.model_dump() for trip in previous], old_before)
+        for original, copied in zip(trips, merged, strict=True):
+            self.assertIsNot(original, copied)
+        for fresh, old in (
+            (trips + [trips[0]], previous),
+            (trips, previous + [previous[0]]),
+        ):
+            with (
+                self.subTest(fresh=len(fresh), old=len(old)),
+                self.assertRaises(ValueError),
+            ):
+                relatorio.merge_persisted_trip_fields(fresh, old)
+        self.assertEqual([trip.model_dump() for trip in trips], before)
+        self.assertEqual([trip.model_dump() for trip in previous], old_before)
+
     def test_complementary_pcdp_keeps_its_suffix(self) -> None:
         rows = sample_rows()
         rows[2][0]["text"] = "999932/26-1C"

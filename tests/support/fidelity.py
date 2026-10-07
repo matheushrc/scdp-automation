@@ -1,8 +1,19 @@
 """Assertions for preserving manually maintained workbook sheets."""
 
 
-def assert_manual_sheets_preserved(case, actual_workbook, source):
-    case.assertEqual(dict(actual_workbook.defined_names), dict(source.defined_names))
+def assert_manual_sheets_preserved(case, actual_workbook, source, *, excluded_names=()):
+    case.assertEqual(
+        {
+            name: definition
+            for name, definition in actual_workbook.defined_names.items()
+            if name not in excluded_names
+        },
+        {
+            name: definition
+            for name, definition in source.defined_names.items()
+            if name not in excluded_names
+        },
+    )
     case.assertEqual(actual_workbook.loaded_theme, source.loaded_theme)
     for name in ("APOIO", "RESUMO GASTOS"):
         actual, expected = actual_workbook[name], source[name]

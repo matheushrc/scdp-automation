@@ -20,11 +20,17 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from scdp_automation.config import REPO_ROOT
 from scdp_automation.relatorio import Viagem
+from scdp_automation.xlsx_base import rebuild_base_from_template
+from scdp_automation.xlsx_manual import (
+    apply_base_manual_values,
+    read_base_manual_values,
+)
 from scdp_automation.xlsx_models import TripSummary, summarize_trips
 from scdp_automation.xlsx_validation import (
     WorkbookValidationError,
     same_formula,
     segment_formula,
+    validate_preserved_sheets,
     validate_workbook,
 )
 
@@ -99,7 +105,15 @@ def _load_workbook_for_refresh(
             f"Não foi possível abrir {context}. {recovery}"
         ) from error
     try:
-        validate_workbook(workbook)
+        if role == "Workbook publicado":
+            if workbook.sheetnames != ["BASE VIAGENS", "APOIO", "RESUMO GASTOS"]:
+                raise WorkbookValidationError(
+                    "O workbook não contém as três worksheets esperadas."
+                )
+            manual = read_base_manual_values(workbook["BASE VIAGENS"])
+            validate_preserved_sheets(workbook, manual)
+        else:
+            validate_workbook(workbook)
     except WorkbookValidationError as error:
         workbook.close()
         raise WorkbookValidationError(
@@ -207,15 +221,12 @@ def _write_base_rows(
 
     base.tables[BASE_TABLE_NAME].ref = f"A1:R{target_last_row}"
     base.tables[BASE_TABLE_NAME].tableColumns = []
-    from scdp_automation.xlsx_presentation import format_base_sheet
-
-    format_base_sheet(base)
 
 
 def _validate_candidate(
     candidate_path: Path, summaries: Sequence[TripSummary] | None = None
 ) -> None:
-    workbook = _load_workbook_for_refresh(candidate_path)
+    workbook = _load_workbook_for_refresh(candidate_path, role="Candidato")
     try:
         base = workbook["BASE VIAGENS"]
         actual_rows = [
@@ -276,39 +287,38 @@ def build_candidate(
     template = _load_workbook_for_refresh(source_path, role="Template obrigatório")
     workbook = template
     try:
-        summaries = summarize_trips(trips)
-        manual_codes: dict[str, str] = {}
-        manual_decisions: dict[str, str | None] = {}
+        # Detect duplicate incoming identities before reading or rewriting output.
+        summarize_trips(trips)
+        effective_trips = apply_base_manual_values(trips, {})
         if current_path.exists():
             workbook = _load_workbook_for_refresh(
                 current_path, role="Workbook publicado", template_path=source_path
             )
-            base = workbook["BASE VIAGENS"]
-            existing_pcdps = {
-                base.cell(row, 1).value
-                for row in range(2, base.max_row + 1)
-                if base.cell(row, 1).value
-            }
-            missing = tuple(
-                sorted(existing_pcdps - {summary.pcdp for summary in summaries})
-            )
-            if missing:
+            manual = read_base_manual_values(workbook["BASE VIAGENS"])
+            try:
+                effective_trips = apply_base_manual_values(trips, manual)
+            except WorkbookValidationError as error:
                 raise WorkbookValidationError(
-                    f"O workbook publicado em {current_path}: a listagem completa está sem {len(missing)} PCDP(s) já publicadas; reconcilie o relatório antes de atualizar.",
-                    missing_pcdps=missing,
-                )
-            for row in range(2, base.max_row + 1):
-                pcdp = base.cell(row, 1).value
-                if pcdp:
-                    if base.cell(row, 17).value:
-                        manual_codes[pcdp] = base.cell(row, 17).value
-                    manual_decisions[pcdp] = base.cell(row, 18).value or None
+                    f"Workbook publicado em {current_path}: {error}",
+                    missing_pcdps=error.missing_pcdps,
+                ) from error
+            rebuild_base_from_template(workbook, template)
         else:
             # Template travel data is never an extraction input, even for matching keys.
             base = workbook["BASE VIAGENS"]
             for row in base.iter_rows(min_row=2):
                 for cell in row:
                     cell.value = None
+        summaries = summarize_trips(effective_trips)
+        manual_codes = {
+            trip.numero_da_solicitacao: trip.codigo_de_debito
+            for trip in effective_trips
+            if trip.codigo_de_debito is not None
+        }
+        manual_decisions: dict[str, str | None] = {
+            trip.numero_da_solicitacao: trip.descontar_do_curso
+            for trip in effective_trips
+        }
         _write_base_rows(workbook, summaries, manual_codes, manual_decisions)
         _extend_base_choices(workbook["BASE VIAGENS"])
         install_decision_highlighting(workbook["BASE VIAGENS"])

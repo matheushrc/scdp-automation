@@ -52,16 +52,17 @@ class FidelityTests(unittest.TestCase):
         self.assertEqual(self.current.read_bytes(), original)
         self.assertFalse(self.candidate.exists())
 
-    def test_old_output_is_rejected(self):
+    def test_legacy_marker_with_current_manual_sheets_is_recoverable(self):
         book = load_workbook(self.current)
         book.defined_names["SCDPLayoutVersion"].attr_text = '"8"'
         book.save(self.current)
         book.close()
         original = self.current.read_bytes()
-        with self.assertRaises(WorkbookValidationError):
-            xlsx_output.build_candidate([], self.current, self.candidate)
+        xlsx_output.build_candidate([], self.current, self.candidate)
         self.assertEqual(self.current.read_bytes(), original)
-        self.assertFalse(self.candidate.exists())
+        candidate = load_workbook(self.candidate)
+        self.addCleanup(candidate.close)
+        self.assertEqual(candidate.defined_names["SCDPLayoutVersion"].attr_text, '"10"')
 
     def test_fresh_base_does_not_import_template_trips(self):
         book = load_workbook(self.template)

@@ -47,6 +47,9 @@ class WorkbookErrorTests(unittest.TestCase):
                 final_template_fixture(self.output)
                 book = load_workbook(source)
                 book.defined_names["SCDPLayoutVersion"].attr_text = '"9"'
+                if role == "publicado":
+                    book["APOIO"].insert_cols(8)
+                    book["APOIO"]["H1"] = "Transportes pago (R$)"
                 book.save(source)
                 book.close()
                 paths = (self.template, self.output, checkpoint, backup)
@@ -58,14 +61,20 @@ class WorkbookErrorTests(unittest.TestCase):
                     self.assertRaises(WorkbookValidationError) as caught,
                 ):
                     preflight_extraction(checkpoint, self.output)
-                for text in (str(source), role, "esperada 10", 'observada "9"'):
+                for text in (
+                    str(source),
+                    role,
+                    "esperada 10" if role == "obrigatório" else "APOIO",
+                ):
                     self.assertIn(text, str(caught.exception))
                 self.assertEqual(before, [path.read_bytes() for path in paths])
 
-    def test_old_output_identifies_version_path_and_non_destructive_recovery(self):
+    def test_incompatible_output_identifies_path_and_non_destructive_recovery(self):
         final_template_fixture(self.output)
         workbook = load_workbook(self.output)
         workbook.defined_names["SCDPLayoutVersion"].attr_text = '"8"'
+        workbook["APOIO"].insert_cols(8)
+        workbook["APOIO"]["H1"] = "Transportes pago (R$)"
         workbook.save(self.output)
         workbook.close()
         before = self.output.read_bytes(), self.template.read_bytes()
@@ -75,8 +84,7 @@ class WorkbookErrorTests(unittest.TestCase):
         for text in (
             str(self.output),
             "publicado",
-            "10",
-            "8",
+            "APOIO",
             str(self.template),
             "JSON",
             "históricos",
@@ -153,6 +161,21 @@ class WorkbookErrorTests(unittest.TestCase):
         self.assertIn(str(self.template), str(caught.exception))
         self.assertEqual(caught.exception.missing_pcdps, ("123/26",))
         self.assertIs(caught.exception.__cause__, original)
+
+    def test_candidate_failure_identifies_candidate_role_and_path(self):
+        from scdp_automation.xlsx_output import _validate_candidate
+
+        candidate = self.root / "candidate.xlsx"
+        final_template_fixture(candidate)
+        workbook = load_workbook(candidate)
+        workbook["APOIO"]["D2"] = "bad budget"
+        workbook.save(candidate)
+        workbook.close()
+        with self.assertRaises(WorkbookValidationError) as caught:
+            _validate_candidate(candidate)
+        self.assertIn("Candidato", str(caught.exception))
+        self.assertIn(str(candidate), str(caught.exception))
+        self.assertIn("APOIO", str(caught.exception))
 
     def test_cli_reports_known_errors_and_leaves_unexpected_bugs_visible(self):
         # The browser/profile setup is external; the CLI presentation remains real.

@@ -42,6 +42,9 @@ class PublicationPreflightTests(unittest.IsolatedAsyncioTestCase):
             path = self.template if failure == "old template" else self.workbook
             book = load_workbook(path)
             book.defined_names["SCDPLayoutVersion"].attr_text = '"8"'
+            if failure == "incompatible output":
+                book["APOIO"].insert_cols(8)
+                book["APOIO"]["H1"] = "Transportes pago (R$)"
             book.save(path)
             book.close()
 
@@ -56,7 +59,7 @@ class PublicationPreflightTests(unittest.IsolatedAsyncioTestCase):
         for failure in (
             "missing template",
             "old template",
-            "old output",
+            "incompatible output",
             "orphan workbook",
         ):
             with self.subTest(failure=failure):
@@ -85,7 +88,7 @@ class PublicationPreflightTests(unittest.IsolatedAsyncioTestCase):
         for failure in (
             "missing template",
             "old template",
-            "old output",
+            "incompatible output",
             "orphan workbook",
         ):
             with self.subTest(failure=failure):

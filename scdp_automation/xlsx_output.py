@@ -76,7 +76,7 @@ def _load_workbook_for_refresh(
 ) -> Workbook:
     context = f"{role} em {path}"
     if role == "Template obrigatório":
-        recovery = "Restaure um template final válido, versão 9, nesse caminho."
+        recovery = "Restaure um template final válido, versão 10, nesse caminho."
     elif role == "Workbook publicado":
         source = template_path or DEFAULT_TEMPLATE
         recovery = (

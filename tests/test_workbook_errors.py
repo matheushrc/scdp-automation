@@ -30,6 +30,38 @@ class WorkbookErrorTests(unittest.TestCase):
         self.output.parent.mkdir()
         final_template_fixture(self.template)
 
+    def test_version_9_sources_are_rejected_without_changes(self):
+        from scdp_automation.extrator import preflight_extraction
+
+        checkpoint = self.output.with_suffix(".json")
+        backup = self.output.parent / "backup" / "synthetic.xlsx"
+        backup.parent.mkdir()
+        checkpoint.write_text("[]")
+        backup.write_bytes(b"synthetic backup")
+        for role, source in (
+            ("obrigatório", self.template),
+            ("publicado", self.output),
+        ):
+            with self.subTest(role=role):
+                final_template_fixture(self.template)
+                final_template_fixture(self.output)
+                book = load_workbook(source)
+                book.defined_names["SCDPLayoutVersion"].attr_text = '"9"'
+                book.save(source)
+                book.close()
+                paths = (self.template, self.output, checkpoint, backup)
+                before = [path.read_bytes() for path in paths]
+                with (
+                    patch(
+                        "scdp_automation.xlsx_output.DEFAULT_TEMPLATE", self.template
+                    ),
+                    self.assertRaises(WorkbookValidationError) as caught,
+                ):
+                    preflight_extraction(checkpoint, self.output)
+                for text in (str(source), role, "esperada 10", 'observada "9"'):
+                    self.assertIn(text, str(caught.exception))
+                self.assertEqual(before, [path.read_bytes() for path in paths])
+
     def test_old_output_identifies_version_path_and_non_destructive_recovery(self):
         final_template_fixture(self.output)
         workbook = load_workbook(self.output)
@@ -43,7 +75,7 @@ class WorkbookErrorTests(unittest.TestCase):
         for text in (
             str(self.output),
             "publicado",
-            "9",
+            "10",
             "8",
             str(self.template),
             "JSON",
@@ -63,7 +95,7 @@ class WorkbookErrorTests(unittest.TestCase):
         with self.assertRaises(WorkbookValidationError) as caught:
             validate_workbook_sources(self.output, template_path=self.template)
         message = str(caught.exception)
-        for text in (str(self.template), "obrigatório", "ausente", "9", "Restaure"):
+        for text in (str(self.template), "obrigatório", "ausente", "10", "Restaure"):
             self.assertIn(text, message)
         self.assertNotIn("JSON", message)
 

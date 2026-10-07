@@ -227,7 +227,7 @@ class FidelityTests(unittest.TestCase):
             for r in range(2, support.max_row + 1)
             if support.cell(r, 1).value == "PPGEL +"
         )
-        for column in (4, 5, 7, 8, 9, 10, 11):
+        for column in (4, 5, 7, 8, 9, 10):
             support.cell(row, column).value = None
         book.save(self.current)
         book.close()

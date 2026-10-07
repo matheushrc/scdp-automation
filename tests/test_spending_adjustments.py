@@ -91,7 +91,7 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
         )
         base["Q2"] = "PPGEL +"
         base["K2"] = 100
-        for column in (4, 5, 7, 8, 9, 10, 11):
+        for column in (4, 5, 7, 8, 9, 10):
             support.cell(rateio_row, column).value = None
         with self.assertRaisesRegex(WorkbookValidationError, "100%"):
             validate_workbook(workbook)
@@ -103,7 +103,7 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
             ((True, 0, 0), False),
         ):
             with self.subTest(weights=weights):
-                for column, weight in zip((9, 10, 11), weights, strict=True):
+                for column, weight in zip((8, 9, 10), weights, strict=True):
                     support.cell(rateio_row, column).value = weight
                 if valid:
                     validate_workbook(workbook)
@@ -111,7 +111,7 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
                     with self.assertRaisesRegex(WorkbookValidationError, "100%"):
                         validate_workbook(workbook)
         base["K2"] = None
-        for column in (9, 10, 11):
+        for column in (8, 9, 10):
             support.cell(rateio_row, column).value = None
         validate_workbook(workbook)
 

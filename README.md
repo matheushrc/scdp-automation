@@ -6,7 +6,7 @@ Sistema para extrair o relatório **Relatórios > Viagem** do SCDP e atualizar a
 
 Instale o [uv](https://docs.astral.sh/uv/) e o Google Chrome. Execute os comandos na raiz do projeto. O projeto requer Python 3.14.5 ou superior, dentro da série 3.14.
 
-Antes de extrair, coloque o template final obrigatório em `input/gastos_scdp_template.xlsx`. Ele deve declarar `SCDPLayoutVersion="9"` e conter, nesta ordem, `BASE VIAGENS`, `APOIO` e `RESUMO GASTOS`. O template é somente leitura; arquivos ausentes, inválidos ou de layouts antigos são recusados, inclusive quando já existe uma saída. Não há conversão de layouts nem geração de uma planilha alternativa.
+Antes de extrair, coloque o template final obrigatório em `input/gastos_scdp_template.xlsx`. Ele deve declarar `SCDPLayoutVersion="10"` e conter, nesta ordem, `BASE VIAGENS`, `APOIO` e `RESUMO GASTOS`. O template é somente leitura; arquivos ausentes, inválidos ou de layouts antigos são recusados, inclusive quando já existe uma saída. Não há conversão de layouts nem geração de uma planilha alternativa.
 
 Instale as dependências:
 
@@ -124,15 +124,15 @@ As colunas de início da viagem, término da viagem e última verificação fica
 
 Cadastre os códigos de débito, os nomes e os segmentos das categorias. `PPGH/PPGDH` é um único código para Mestrado e Doutorado em História.
 
-Preencha os valores conhecidos nas colunas `Diárias e passagens distribuído (R$)`, `Transportes distribuído (R$)`, `Transportes agendado (R$)` e `Transportes pago (R$)`. Informe `0` quando o valor for conhecido e igual a zero; deixe vazio apenas o que ainda não foi informado. O recurso total, na coluna F, é calculado pela soma das duas distribuições. O total utilizado por categoria, na coluna L, também é calculado.
+Preencha os valores conhecidos nas colunas `Diárias e passagens distribuído (R$)`, `Transportes distribuído (R$)`, `Transportes agendado (R$)` (colunas D, E e G). Informe `0` quando o valor for conhecido e igual a zero; deixe vazio apenas o que ainda não foi informado. O recurso total, na coluna F, é calculado pela soma das duas distribuições. O total utilizado por categoria, na coluna K, também é calculado.
 
-As colunas I a K contêm o rateio de `PPGEL +` entre PPGE, PPGEL e História. Preencha percentuais que somem 100% quando essa categoria tiver valores ou gastos. Não repita o orçamento de uma categoria principal nas suas subcategorias.
+As colunas H a J contêm o rateio de `PPGEL +` entre PPGE, PPGEL e História. Preencha percentuais que somem 100% quando essa categoria tiver valores ou gastos. Não repita o orçamento de uma categoria principal nas suas subcategorias.
 
 Para incluir uma categoria, copie uma linha existente da tabela, mantenha as fórmulas e preencha um código único, nome, segmento e os valores disponíveis. Depois, classifique as viagens com esse código em `BASE VIAGENS`.
 
 ### RESUMO GASTOS
 
-Confira os recursos distribuídos, os gastos, os transportes e os saldos por categoria. O utilizado de transportes corresponde ao valor agendado; o valor pago permanece disponível em `APOIO`. As subcategorias com código iniciado por `DIREÇÃO -` alimentam o total de Direção, e `PPGEL +` é distribuído conforme os percentuais informados em `APOIO`.
+Confira os recursos distribuídos, os gastos, os transportes e os saldos por categoria. O utilizado de transportes corresponde ao valor agendado. As subcategorias com código iniciado por `DIREÇÃO -` alimentam o total de Direção, e `PPGEL +` é distribuído conforme os percentuais informados em `APOIO`.
 
 Não existe uma coluna `Grupo no resumo`. As linhas do resumo identificam a categoria pelo nome por extenso ou pelo código de débito cadastrado em `APOIO`. Para apresentar uma categoria nova, copie uma linha de categoria do resumo, mantenha as fórmulas e troque o nome pelo nome ou código correspondente. Categorias sem linha no resumo são sinalizadas como pendência.
 
@@ -167,7 +167,7 @@ Os arquivos em `input/`, `output/` e `logs/`, as cópias de perfil `.scdp-browse
 
 ### Erros de planilha
 
-A mensagem identifica o caminho e distingue o template obrigatório da saída publicada. O layout aceito é somente a versão 9; não altere o marcador de versão para contornar a validação. Se o template estiver ausente ou inválido, restaure `input/gastos_scdp_template.xlsx` com um template final válido.
+A mensagem identifica o caminho e distingue o template obrigatório da saída publicada. O layout aceito é somente a versão 10; não altere o marcador de versão para contornar a validação. Se o template estiver ausente ou inválido, restaure `input/gastos_scdp_template.xlsx` com um template final válido.
 
 `git pull` e `git reset` não atualizam os resultados locais ignorados pelo Git. Se uma saída antiga tiver layout incompatível e você quiser começar novamente, preserve a pasta `output` inteira, incluindo JSON e históricos, fora da saída ativa antes de executar de novo. Na raiz do projeto, o PowerShell pode arquivá-la sem apagar os dados:
 

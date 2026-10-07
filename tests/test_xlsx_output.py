@@ -409,6 +409,79 @@ class WorkbookValidationTests(unittest.TestCase):
         self.book = load_workbook(path)
         self.addCleanup(self.book.close)
 
+    def test_layout_10_accepts_eleven_support_columns(self):
+        from scdp_automation.xlsx_validation import validate_workbook
+
+        support = self.book["APOIO"]
+        self.assertEqual(support.max_column, 11)
+        self.assertEqual(support.tables["tblApoioDebito"].ref, "A1:K10")
+        self.assertEqual(self.book.defined_names["SCDPLayoutVersion"].attr_text, '"10"')
+        self.assertNotIn("ApoioH", self.book.defined_names)
+        validate_workbook(self.book)
+
+    def test_shifted_rateio_names_are_required(self):
+        from scdp_automation.xlsx_validation import validate_workbook
+
+        validate_workbook(self.book)
+        for name, current, old in (
+            ("ApoioJ", "H", "I"),
+            ("ApoioK", "I", "J"),
+            ("ApoioL", "J", "K"),
+            ("ApoioM", "K", "L"),
+        ):
+            with self.subTest(name=name):
+                definition = self.book.defined_names[name]
+                original = definition.attr_text
+                definition.attr_text = original.replace(f"${current}$1", f"${old}$1")
+                with self.assertRaisesRegex(WorkbookValidationError, name):
+                    validate_workbook(self.book)
+                definition.attr_text = original
+
+    def test_rateio_uses_h_to_j_and_remaining_financial_triggers(self):
+        from scdp_automation.xlsx_validation import validate_workbook
+
+        support = self.book["APOIO"]
+        row = next(
+            r
+            for r in range(2, support.max_row + 1)
+            if support.cell(r, 1).value == "PPGEL +"
+        )
+        base = self.book["BASE VIAGENS"]
+        for column in (4, 5, 7, 8, 9, 10):
+            support.cell(row, column).value = None
+        validate_workbook(self.book)
+        for column in (4, 5, 7):
+            support.cell(row, column, 0)
+        validate_workbook(self.book)
+        for column in (4, 5, 7):
+            with self.subTest(trigger=column):
+                support.cell(row, column, 1)
+                with self.assertRaisesRegex(WorkbookValidationError, "rateio"):
+                    validate_workbook(self.book)
+                support.cell(row, column, 0)
+        base["A2"], base["Q2"], base["K2"] = "123/26", "PPGEL +", 1
+        with self.assertRaisesRegex(WorkbookValidationError, "rateio"):
+            validate_workbook(self.book)
+        base["K2"] = 0
+        for weights in ((0.5, 0.25, 0.25), (0.5, 0.25, 0.25000000005)):
+            for column, value in zip((8, 9, 10), weights, strict=True):
+                support.cell(row, column, value)
+            validate_workbook(self.book)
+        for value in ("0.5", True, float("inf"), -0.1, 1.1, 0.4):
+            with self.subTest(weight=value):
+                support.cell(row, 8, value)
+                support.cell(row, 10, 0.25)
+                with self.assertRaisesRegex(WorkbookValidationError, "rateio"):
+                    validate_workbook(self.book)
+        support.cell(row, 8, 0.5)
+        for column in (4, 5, 7):
+            for value in (True, "1", float("inf")):
+                with self.subTest(column=column, value=value):
+                    support.cell(row, column, value)
+                    with self.assertRaisesRegex(WorkbookValidationError, "numérico"):
+                        validate_workbook(self.book)
+                    support.cell(row, column, 0)
+
     def test_header_only_base_table_is_rejected(self):
         from scdp_automation.xlsx_validation import validate_workbook
 

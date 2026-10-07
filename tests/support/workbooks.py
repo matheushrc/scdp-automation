@@ -37,7 +37,6 @@ def final_template_fixture(path: Path) -> None:
             "Transportes distribuído (R$)",
             "Recurso total (R$)",
             "Transportes agendado (R$)",
-            "Transportes pago (R$)",
             "Rateio para PPGE (%)",
             "Rateio para PPGEL (%)",
             "Rateio para PPGH (%)",
@@ -56,17 +55,17 @@ def final_template_fixture(path: Path) -> None:
         ("AFASTAMENTO", "Afastamento", "SEG 3 OUTROS"),
     )
     for row, category in enumerate(categories, 2):
-        support.append((*category, 400, 600, None, 200, 150, None, None, None, None))
+        support.append((*category, 400, 600, None, 200, None, None, None, None))
         support.cell(
             row, 6, f'=IF(AND(ISNUMBER(D{row}),ISNUMBER(E{row})),D{row}+E{row},"")'
         )
         support.cell(
             row,
-            12,
+            11,
             f'=IF(COUNTIFS(ViagensM,A{row},ViagensC,"Cancelada",ViagensN,"")>0,"Pendente",SUMIFS(ViagensK,ViagensM,A{row},ViagensC,"<>Cancelada")+SUMIFS(ViagensK,ViagensM,A{row},ViagensC,"Cancelada",ViagensN,"Sim"))',
         )
         if category[0] == "PPGEL +":
-            for column, weight in zip((9, 10, 11), (0.5, 0.25, 0.25), strict=True):
+            for column, weight in zip((8, 9, 10), (0.5, 0.25, 0.25), strict=True):
                 support.cell(row, column, weight)
     summary["B2"] = "RESUMO DE GASTOS"
     summary.merge_cells("B2:I2")
@@ -117,7 +116,7 @@ def final_template_fixture(path: Path) -> None:
     )
     summary["J20"] = "=SUM(ApoioG)"
     for sheet, prefix, columns, height_row in (
-        ("APOIO", "Apoio", "ABCDEFGHJKLM", 1),
+        ("APOIO", "Apoio", "ABCDEFGJKLM", 1),
         ("BASE VIAGENS", "Viagens", "ABCDEFGHIJKLMNOPQ", 2),
         ("RESUMO GASTOS", "Resumo", "BCDEFGHIJKLMNOP", 3),
     ):
@@ -133,7 +132,7 @@ def final_template_fixture(path: Path) -> None:
                     column, column
                 )
                 if sheet == "BASE VIAGENS"
-                else {"J": "I", "K": "J", "L": "K", "M": "L"}.get(column, column)
+                else {"J": "H", "K": "I", "L": "J", "M": "K"}.get(column, column)
                 if sheet == "APOIO"
                 else column
             )
@@ -150,10 +149,10 @@ def final_template_fixture(path: Path) -> None:
                 attr_text=f"OFFSET('APOIO'!$A$1,1,0,MAX(1,'RESUMO GASTOS'!$R$1),{width})",
             )
         )
-    workbook.defined_names.add(DefinedName("SCDPLayoutVersion", attr_text='"9"'))
+    workbook.defined_names.add(DefinedName("SCDPLayoutVersion", attr_text='"10"'))
     for sheet, name, area in (
         (base, "tblBaseViagens", "A1:R2"),
-        (support, "tblApoioDebito", "A1:L10"),
+        (support, "tblApoioDebito", "A1:K10"),
     ):
         sheet.add_table(Table(displayName=name, ref=area))
     for formula, area in (
@@ -166,7 +165,7 @@ def final_template_fixture(path: Path) -> None:
     validation = DataValidation(
         type="decimal", operator="between", formula1=0, formula2=1, allow_blank=True
     )
-    validation.add("I2:K10")
+    validation.add("H2:J10")
     support.add_data_validation(validation)
     for sheet in workbook:
         sheet.column_dimensions["B"].width = 44

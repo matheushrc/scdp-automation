@@ -37,7 +37,6 @@ SUPPORT_HEADERS = (
     "Transportes distribuído (R$)",
     "Recurso total (R$)",
     "Transportes agendado (R$)",
-    "Transportes pago (R$)",
     "Rateio para PPGE (%)",
     "Rateio para PPGEL (%)",
     "Rateio para PPGH (%)",
@@ -82,11 +81,11 @@ def validate_workbook(workbook: Workbook) -> None:
             "O workbook não contém as três worksheets esperadas."
         )
     version = workbook.defined_names.get("SCDPLayoutVersion")
-    if version is None or version.attr_text != '"9"':
+    if version is None or version.attr_text != '"10"':
         raise WorkbookValidationError(
-            f"Versão do layout inválida: esperada 9; observada "
+            f"Versão do layout inválida: esperada 10; observada "
             f"{version.attr_text if version is not None else 'ausente (marcador SCDPLayoutVersion)'}. "
-            "Use o template final versão 9."
+            "Use o template final versão 10."
         )
     base, support = workbook["BASE VIAGENS"], workbook["APOIO"]
     for sheet, headers in ((base, BASE_HEADERS), (support, SUPPORT_HEADERS)):
@@ -96,7 +95,7 @@ def validate_workbook(workbook: Workbook) -> None:
             )
     for sheet, name, last_column in (
         (base, "tblBaseViagens", 18),
-        (support, "tblApoioDebito", 12),
+        (support, "tblApoioDebito", 11),
     ):
         if name not in sheet.tables:
             raise WorkbookValidationError("Tabela necessária ausente.")
@@ -134,11 +133,10 @@ def validate_workbook(workbook: Workbook) -> None:
                 "E": "E",
                 "F": "F",
                 "G": "G",
-                "H": "H",
-                "J": "I",
-                "K": "J",
-                "L": "K",
-                "M": "L",
+                "J": "H",
+                "K": "I",
+                "L": "J",
+                "M": "K",
             },
             1,
         ),
@@ -211,7 +209,7 @@ def validate_workbook(workbook: Workbook) -> None:
         ):
             raise WorkbookValidationError("Código inválido ou duplicado em APOIO.")
         seen_codes.add(code)
-        for col in (4, 5, 7, 8):
+        for col in (4, 5, 7):
             value = support.cell(row, col).value
             if value is not None and (
                 isinstance(value, bool)
@@ -221,9 +219,9 @@ def validate_workbook(workbook: Workbook) -> None:
                 raise WorkbookValidationError(
                     "Orçamento e transporte em APOIO precisam de valor numérico."
                 )
-        weights = [support.cell(row, col).value for col in (9, 10, 11)]
+        weights = [support.cell(row, col).value for col in (8, 9, 10)]
         if code == "PPGEL +":
-            required = any(support.cell(row, col).value for col in (4, 5, 7, 8)) or any(
+            required = any(support.cell(row, col).value for col in (4, 5, 7)) or any(
                 base.cell(r, 17).value == code and base.cell(r, 11).value
                 for r in range(2, base.max_row + 1)
             )

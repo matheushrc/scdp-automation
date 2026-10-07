@@ -275,6 +275,15 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         default = patch.object(xlsx_output, "DEFAULT_TEMPLATE", template)
         default.start()
         self.addCleanup(default.stop)
+        root = Path(directory.name)
+        self.checkpoint = root / "output" / OUTPUT_PATH.name
+        self.workbook = root / "output" / WORKBOOK_PATH.name
+        self.workbook.parent.mkdir()
+        final_template_fixture(self.workbook)
+        save_json(self.checkpoint, [])
+        project_root = patch("scdp_automation.extrator.REPO_ROOT", root)
+        project_root.start()
+        self.addCleanup(project_root.stop)
 
     def test_checkpoint_is_saved_before_workbook_publication(self) -> None:
         trips = [make_valid_trip("000001/26")]
@@ -439,7 +448,7 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         playwright_manager = MagicMock()
         playwright_manager.__aenter__ = AsyncMock(return_value=object())
         playwright_manager.__aexit__ = AsyncMock(return_value=False)
-        session = OutputHistory(OUTPUT_PATH, WORKBOOK_PATH)
+        session = OutputHistory(self.checkpoint, self.workbook)
         observed = []
 
         def check_session(stage):
@@ -565,8 +574,8 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(workbook_publisher.call_count, 2)
-        workbook_publisher.assert_called_with(trips, WORKBOOK_PATH)
-        pending.assert_awaited_once_with(page, trips, [trips[0]], OUTPUT_PATH)
+        workbook_publisher.assert_called_with(trips, self.workbook)
+        pending.assert_awaited_once_with(page, trips, [trips[0]], self.checkpoint)
 
     async def test_classification_reminder_has_no_trip_data(self) -> None:
         secrets = ("000999/26", "NOME_PRIVADO_TESTE", "DESCRICAO_PRIVADA_TESTE")
@@ -578,13 +587,13 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(workbook_publisher.call_count, 2)
-        workbook_publisher.assert_called_with([trip], WORKBOOK_PATH)
+        workbook_publisher.assert_called_with([trip], self.workbook)
         log_calls = repr(logger_info.call_args_list)
         for secret in secrets:
             self.assertNotIn(secret, log_calls)
         self.assertIn("BASE VIAGENS", log_calls)
         self.assertIn("APOIO", log_calls)
-        self.assertIn(str(WORKBOOK_PATH.resolve()), log_calls)
+        self.assertIn(str(self.workbook.resolve()), log_calls)
         self.assertIn(str(backup.resolve()), log_calls)
 
 

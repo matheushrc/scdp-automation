@@ -132,9 +132,9 @@ class PublicationPreflightTests(unittest.IsolatedAsyncioTestCase):
         book = load_workbook(self.workbook)
         book["BASE VIAGENS"]["Q2"] = "PPGEL +"
         book["BASE VIAGENS"]["K2"] = 0
-        for column in (4, 5, 7, 8):
+        for column in (4, 5, 7):
             book["APOIO"].cell(7, column).value = 0
-        for column in (9, 10, 11):
+        for column in (8, 9, 10):
             book["APOIO"].cell(7, column).value = None
         book.save(self.workbook)
         book.close()

@@ -11,7 +11,8 @@
 
 ## Workbook contract
 
-- The required read-only `input/gastos_scdp_template.xlsx` (layout version 9) is the source of the workbook layout. Existing output supplies manual data on refresh.
+- The required read-only `input/gastos_scdp_template.xlsx` (layout version 10) is the source of the workbook layout. Existing output supplies manual data on refresh.
+- APOIO manual monetary inputs are D/E/G, PPGEL + allocation weights are H:J, and category totals are K.
 - Do not reintroduce legacy layout migrators, imports or APOIO/resumo generators without an explicit requirement. Preserve the final template and manual worksheets.
 
 ## Superpowers artifacts

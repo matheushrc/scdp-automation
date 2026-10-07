@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from copy import copy
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 from zipfile import BadZipFile
 from zoneinfo import ZoneInfo
@@ -14,6 +15,7 @@ from zoneinfo import ZoneInfo
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 from openpyxl.utils.exceptions import InvalidFileException
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
 
 from scdp_automation.config import REPO_ROOT
@@ -82,6 +84,36 @@ def _load_workbook_for_refresh(path: Path) -> Workbook:
         workbook.close()
         raise
     return workbook
+
+
+def validate_workbook_sources(
+    current_path: Path, *, template_path: Path | None = None
+) -> None:
+    """Preflight required source workbooks without creating or modifying output."""
+    source = template_path or DEFAULT_TEMPLATE
+    if source.resolve() == current_path.resolve():
+        raise WorkbookValidationError(
+            "Template e workbook publicado devem ter caminhos separados."
+        )
+    template = _load_workbook_for_refresh(source)
+    template.close()
+    if current_path.exists():
+        current = _load_workbook_for_refresh(current_path)
+        current.close()
+
+
+def _extend_base_choices(base: Worksheet) -> None:
+    """Candidate controls intentionally cover future BASE rows too."""
+    for formula, column in (("CodigosDebito", "Q"), ('"Sim,Não"', "R")):
+        for validation in cast(
+            list[DataValidation], base.data_validations.dataValidation
+        ):
+            if validation.type == "list" and validation.formula1 in (
+                formula,
+                "=" + formula,
+            ):
+                validation.add(f"{column}2:{column}1048576")
+                break
 
 
 def _write_base_rows(
@@ -249,6 +281,7 @@ def build_candidate(
                 for cell in row:
                     cell.value = None
         _write_base_rows(workbook, summaries, manual_codes, manual_decisions)
+        _extend_base_choices(workbook["BASE VIAGENS"])
         install_decision_highlighting(workbook["BASE VIAGENS"])
         updated = workbook["RESUMO GASTOS"]["M2"]
         updated.value = datetime.now(ZoneInfo("America/Sao_Paulo")).date()

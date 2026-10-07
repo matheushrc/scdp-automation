@@ -21,7 +21,8 @@ from scdp_automation.logging_config import configure_logging
 from scdp_automation.navegador_chrome import connect_visible_chrome, select_scdp_page
 from scdp_automation.output_history import OutputHistory
 from scdp_automation.relatorio import Viagem, load_trips, parse_report_rows, save_json
-from scdp_automation.xlsx_output import publish_workbook
+from scdp_automation.xlsx_output import publish_workbook, validate_workbook_sources
+from scdp_automation.xlsx_validation import WorkbookValidationError
 
 SCDP_URL = "https://www2.scdp.gov.br/"
 
@@ -346,6 +347,16 @@ async def collect_pending_descriptions(
         logger.info("Descrição {} de {} gravada.", index, len(pending))
 
 
+def preflight_extraction(checkpoint_path: Path, workbook_path: Path) -> None:
+    """Reject unusable sources and a current orphan before extraction writes."""
+    validate_workbook_sources(workbook_path)
+    if workbook_path.exists() and not checkpoint_path.is_file():
+        raise WorkbookValidationError(
+            "A planilha atual está sem seu checkpoint JSON; reconcilie os arquivos "
+            "antes de executar a extração. A planilha foi preservada."
+        )
+
+
 def save_checkpoint_and_publish(
     trips: list[Viagem],
     checkpoint_path: Path,
@@ -354,6 +365,7 @@ def save_checkpoint_and_publish(
     history: OutputHistory,
 ) -> Path | None:
     """Persist the complete JSON checkpoint before refreshing the workbook."""
+    preflight_extraction(checkpoint_path, workbook_path)
     backup = history.archive_previous()
     save_json(checkpoint_path, trips)
     publish_workbook(trips, workbook_path)
@@ -367,6 +379,7 @@ async def run(argv: list[str] | None = None) -> None:
     output = args.output
     workbook_path = args.workbook
     with OutputHistory(output, workbook_path) as history:
+        preflight_extraction(output, workbook_path)
         previous = {v.numero_da_solicitacao: v for v in load_trips(output)}
 
         async with async_playwright() as playwright:

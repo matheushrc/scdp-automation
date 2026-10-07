@@ -175,13 +175,24 @@ def validate_workbook(workbook: Workbook) -> None:
             raise WorkbookValidationError(
                 f"Intervalo nomeado essencial ausente ou inválido: {name}."
             )
-    for formula, column in (("CodigosDebito", "Q"), ('"Sim,Não"', "R")):
-        if not any(
-            v.type == "list"
-            and v.formula1 in (formula, "=" + formula)
-            and str(v.sqref) == f"{column}2:{column}1048576"
-            for v in base.data_validations.dataValidation
-        ):
+    last_base_row = max(
+        2, base.max_row, range_boundaries(base.tables["tblBaseViagens"].ref)[3]
+    )
+    for formula, column in (("CodigosDebito", 17), ('"Sim,Não"', 18)):
+        intervals = sorted(
+            (area.min_row, area.max_row)
+            for validation in base.data_validations.dataValidation
+            if validation.type == "list"
+            and validation.formula1 in (formula, "=" + formula)
+            for area in validation.sqref.ranges
+            if area.min_col <= column <= area.max_col
+        )
+        covered = 1
+        for first, last in intervals:
+            if first > covered + 1:
+                break
+            covered = max(covered, last)
+        if covered < last_base_row:
             raise WorkbookValidationError(
                 "Validação de escolhas em BASE VIAGENS ausente."
             )

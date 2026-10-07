@@ -495,3 +495,66 @@ class WorkbookValidationTests(unittest.TestCase):
                     validate_workbook(self.book)
                 self.assertEqual(summary[coordinate].value, "=1")
                 summary[coordinate] = original
+
+
+class LimitedChoiceRangeTests(unittest.TestCase):
+    def test_limited_source_choices_cover_base_and_candidate_extends_for_new_rows(self):
+        from openpyxl import load_workbook
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            template = root / "template.xlsx"
+            final_template_fixture(template)
+            book = load_workbook(template)
+            base = book["BASE VIAGENS"]
+            for validation in base.data_validations.dataValidation:
+                column = "Q" if "CodigosDebito" in validation.formula1 else "R"
+                validation.sqref = f"{column}2:{column}3"
+                if column == "Q":
+                    validation.formula1 = "=CodigosDebito"
+            book.save(template)
+            book.close()
+            before = template.read_bytes()
+            current = root / "current.xlsx"
+            try:
+                publish_workbook(
+                    [make_trip(f"{i:06d}/26") for i in range(5)],
+                    current,
+                    template_path=template,
+                )
+            except WorkbookValidationError as error:
+                self.fail(f"Sufficient limited source choices rejected: {error}")
+            result = load_workbook(current)
+            self.addCleanup(result.close)
+            for coordinate in ("Q6", "R6", "Q1048576", "R1048576"):
+                self.assertTrue(
+                    any(
+                        coordinate in validation
+                        for validation in result[
+                            "BASE VIAGENS"
+                        ].data_validations.dataValidation
+                    )
+                )
+            self.assertEqual(template.read_bytes(), before)
+
+    def test_source_choices_must_cover_all_table_and_populated_rows(self):
+        from openpyxl import load_workbook
+
+        from scdp_automation.xlsx_validation import validate_workbook
+
+        with TemporaryDirectory() as directory:
+            template = Path(directory) / "template.xlsx"
+            final_template_fixture(template)
+            book = load_workbook(template)
+            self.addCleanup(book.close)
+            base = book["BASE VIAGENS"]
+            for validation in base.data_validations.dataValidation:
+                column = "Q" if "CodigosDebito" in validation.formula1 else "R"
+                validation.sqref = f"{column}2:{column}3"
+            base.tables["tblBaseViagens"].ref = "A1:R4"
+            with self.assertRaises(WorkbookValidationError):
+                validate_workbook(book)
+            base.tables["tblBaseViagens"].ref = "A1:R2"
+            base["A4"] = "000004/26"
+            with self.assertRaises(WorkbookValidationError):
+                validate_workbook(book)

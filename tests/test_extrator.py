@@ -10,6 +10,7 @@ from scdp_automation import xlsx_output
 from scdp_automation.config import REPO_ROOT, current_year
 from scdp_automation.extrator import (
     collect_pending_descriptions,
+    preflight_extraction,
     resolve_report_url,
     run,
     save_checkpoint_and_publish,
@@ -264,6 +265,17 @@ class QueryRetryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from tests.support.workbooks import final_template_fixture
+
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        template = Path(directory.name) / "template.xlsx"
+        final_template_fixture(template)
+        default = patch.object(xlsx_output, "DEFAULT_TEMPLATE", template)
+        default.start()
+        self.addCleanup(default.stop)
+
     def test_checkpoint_is_saved_before_workbook_publication(self) -> None:
         trips = [make_valid_trip("000001/26")]
         directory = TemporaryDirectory()
@@ -442,6 +454,10 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     pass
                 observed.append(stage)
 
+        def preflight(*paths):
+            check_session("preflight")
+            preflight_extraction(*paths)
+
         def read_previous(*_):
             check_session("load")
             return []
@@ -465,6 +481,9 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("scdp_automation.extrator.configure_logging"),
+            patch(
+                "scdp_automation.extrator.preflight_extraction", side_effect=preflight
+            ),
             patch("scdp_automation.extrator.load_trips", side_effect=read_previous),
             patch(
                 "scdp_automation.extrator.async_playwright",
@@ -506,11 +525,14 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     observed,
                     [
+                        "preflight",
                         "load",
                         "browser",
+                        "preflight",
                         "checkpoint",
                         "publish",
                         "pending",
+                        "preflight",
                         "checkpoint",
                         "publish",
                     ],

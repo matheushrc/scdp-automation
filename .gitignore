@@ -13,7 +13,6 @@ wheels/
 !.env.example
 
 # Private input and generated/local data
-/input/
 /output/
 /logs/
 /.local-diagnostics/

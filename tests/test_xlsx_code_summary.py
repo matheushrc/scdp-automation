@@ -26,6 +26,42 @@ class CodeSummaryTests(unittest.TestCase):
         self.candidate = self.root / "candidate.xlsx"
         final_template_fixture(self.template)
 
+    def test_scheduled_transport_drives_summary_and_balance(self):
+        for code, amounts, expected in (
+            ("AGRONOMIA", (600, 200), {"I7": 600, "J7": 200, "K7": 400, "J20": 200}),
+            ("PPGEL +", (0, 200), {"J8": 100, "J9": 50, "J11": 50, "J20": 200}),
+        ):
+            with self.subTest(code=code):
+                self.candidate.unlink(missing_ok=True)
+                final_template_fixture(self.current)
+                book = load_workbook(self.current)
+                support = book["APOIO"]
+                for row in range(2, support.max_row + 1):
+                    support.cell(row, 5).value = 0
+                    support.cell(row, 7).value = 0
+                    if support.cell(row, 1).value == code:
+                        support.cell(row, 5).value = amounts[0]
+                        support.cell(row, 7).value = amounts[1]
+                    if support.cell(row, 1).value == "PPGEL +":
+                        for column, weight in zip(
+                            (8, 9, 10), (0.5, 0.25, 0.25), strict=True
+                        ):
+                            support.cell(row, column).value = weight
+                book.save(self.current)
+                book.close()
+                build_candidate(
+                    [], self.current, self.candidate, template_path=self.template
+                )
+                recalculate_workbook(self.candidate)
+                cached = load_workbook(self.candidate, data_only=True)
+                try:
+                    for coordinate, value in expected.items():
+                        self.assertEqual(
+                            cached["RESUMO GASTOS"][coordinate].value, value, coordinate
+                        )
+                finally:
+                    cached.close()
+
     def test_new_category_uses_code_without_group_or_hidden_metadata(self):
         trip = make_trip("111111/26")
         trip.total_da_viagem_r = 125

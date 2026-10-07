@@ -368,8 +368,11 @@ def _validate_manual_references(workbook: Workbook) -> None:
         if (old[column - 1] if column <= len(old) else None)
         != (BASE_HEADERS[column - 1] if column <= len(BASE_HEADERS) else None)
     }
-    if not changed and tuple(original_headers) == BASE_HEADERS:
-        return
+    layout_changed = bool(changed) or tuple(original_headers) != BASE_HEADERS
+    source_tables = {name.casefold(): name for name in workbook["BASE VIAGENS"].tables}
+    source_names = {name.casefold() for name in workbook.defined_names} | {
+        name.casefold() for name in workbook["BASE VIAGENS"].defined_names
+    }
 
     def check(value, context, *, base_scope=False):
         if not isinstance(value, str):
@@ -383,7 +386,14 @@ def _validate_manual_references(workbook: Workbook) -> None:
                 reference = reference[1:-1].replace('""', '"')
                 if "!" not in reference:
                     continue
-            if reference.lower().startswith("tblbaseviagens"):
+            table_name = reference.rsplit("!", 1)[-1].split("[", 1)[0].casefold()
+            if table_name in source_tables and table_name != "tblbaseviagens":
+                raise WorkbookValidationError(
+                    f"{context}: a tabela BASE {source_tables[table_name]} será substituída; reconcilie a referência manual antes de reconstruir."
+                )
+            if not layout_changed:
+                continue
+            if table_name == "tblbaseviagens":
                 headers = [
                     header.lstrip("@")
                     for header in re.findall(r"\[([^\[\]]+)\]", reference)
@@ -413,6 +423,10 @@ def _validate_manual_references(workbook: Workbook) -> None:
                 reference,
                 re.IGNORECASE,
             )
+            if match and match[2] is None and match[1].casefold() in source_names:
+                # The referenced definition is checked separately; its identifier
+                # is not a physical column label.
+                continue
             if match:
                 bounds = []
                 for endpoint in (match[1], match[2] or match[1]):

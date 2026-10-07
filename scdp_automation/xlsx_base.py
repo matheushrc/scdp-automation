@@ -26,6 +26,20 @@ def rebuild_base_from_template(workbook: Workbook, template: Workbook) -> Worksh
             "BASE VIAGENS do template contém desenho ou elemento não suportado."
         )
     old = workbook["BASE VIAGENS"]
+    managed_names = {
+        name.casefold() for name in MANAGED_BASE_NAMES | {"SCDPLayoutVersion"}
+    }
+    old_names = {name.name.casefold(): name for name in old.defined_names.values()}
+    for name in source.defined_names.values():
+        previous = old_names.get(name.name.casefold())
+        if (
+            previous is not None
+            and name.name.casefold() not in managed_names
+            and previous.attr_text != name.attr_text
+        ):
+            raise WorkbookValidationError(
+                f"BASE VIAGENS: intervalo local {name.name} diverge entre output e template; reconcilie a definição manual antes de reconstruir."
+            )
     position = workbook.index(old)
     workbook.remove(old)
     target = workbook.create_sheet("BASE VIAGENS", position)
@@ -72,14 +86,16 @@ def rebuild_base_from_template(workbook: Workbook, template: Workbook) -> Worksh
     for table in source.tables.values():
         target.add_table(deepcopy(table))
     for name in old.defined_names.values():
-        if (
-            name.name not in source.defined_names
-            and name.name not in MANAGED_BASE_NAMES | {"SCDPLayoutVersion"}
-        ):
+        if name.name.casefold() not in managed_names:
             preserved_name = deepcopy(name)
             preserved_name.localSheetId = position
             target.defined_names.add(preserved_name)
     for name in source.defined_names.values():
+        if (
+            name.name.casefold() in old_names
+            and name.name.casefold() not in managed_names
+        ):
+            continue
         copied_name = deepcopy(name)
         copied_name.localSheetId = position
         target.defined_names.add(copied_name)

@@ -371,6 +371,118 @@ class BaseRecoveryTests(unittest.TestCase):
         self.assertEqual(base["L2"].number_format, "dd/mm/yyyy")
         self.assertIn('"R$"', base["K2"].number_format)
 
+    def test_legacy_base_table_reference_requires_reconciliation(self):
+        for reordered in (False, True):
+            with self.subTest(reordered=reordered):
+                self.candidate.unlink(missing_ok=True)
+                write_existing_workbook(self.current, self.trips)
+                book = load_workbook(self.current)
+                if reordered:
+                    self.reorder(book)
+                base = book["BASE VIAGENS"]
+                table = base.tables.pop("tblBaseViagens")
+                table.name = table.displayName = "LegacyTrips"
+                base.add_table(table)
+                book["APOIO"]["K12"] = "=SUM(LegacyTrips[Total da viagem (R$)])"
+                book.save(self.current)
+                book.close()
+                before = self.current.read_bytes(), self.template.read_bytes()
+                with self.assertRaisesRegex(
+                    WorkbookValidationError, "LegacyTrips.*reconcil"
+                ):
+                    self.build()
+                self.assertEqual(
+                    before, (self.current.read_bytes(), self.template.read_bytes())
+                )
+                self.assertFalse(self.candidate.exists())
+
+    def test_divergent_custom_local_name_collision_requires_reconciliation(self):
+        for reference in ("'BASE VIAGENS'!$B$2", "$B$2"):
+            with self.subTest(reference=reference):
+                self.candidate.unlink(missing_ok=True)
+                book, template = (
+                    load_workbook(self.current),
+                    load_workbook(self.template),
+                )
+                book["BASE VIAGENS"].defined_names.add(
+                    DefinedName(
+                        "ManualKey", attr_text="'BASE VIAGENS'!$A$2", localSheetId=0
+                    )
+                )
+                template["BASE VIAGENS"].defined_names.add(
+                    DefinedName("ManualKey", attr_text=reference, localSheetId=0)
+                )
+                book["APOIO"]["K12"] = "='BASE VIAGENS'!ManualKey"
+                book.save(self.current)
+                template.save(self.template)
+                book.close()
+                template.close()
+                before = self.current.read_bytes(), self.template.read_bytes()
+                with self.assertRaisesRegex(
+                    WorkbookValidationError, "ManualKey.*reconcil"
+                ):
+                    self.build()
+                self.assertEqual(
+                    before, (self.current.read_bytes(), self.template.read_bytes())
+                )
+                self.assertFalse(self.candidate.exists())
+
+    def test_equal_custom_local_name_collision_preserves_manual_dependencies(self):
+        book, template = load_workbook(self.current), load_workbook(self.template)
+        definition = "'BASE VIAGENS'!$A$2"
+        book["BASE VIAGENS"].defined_names.add(
+            DefinedName(
+                "ManualKey",
+                attr_text=definition,
+                localSheetId=0,
+                comment="Operator name",
+            )
+        )
+        template["BASE VIAGENS"].defined_names.add(
+            DefinedName("ManualKey", attr_text=definition, localSheetId=0)
+        )
+        book["APOIO"]["K12"] = "='BASE VIAGENS'!ManualKey"
+        book.save(self.current)
+        template.save(self.template)
+        book.close()
+        template.close()
+        before = self.current.read_bytes(), self.template.read_bytes()
+        self.build()
+        actual, source = load_workbook(self.candidate), load_workbook(self.current)
+        self.addCleanup(actual.close)
+        self.addCleanup(source.close)
+        self.assertEqual(
+            before, (self.current.read_bytes(), self.template.read_bytes())
+        )
+        self.assertEqual(
+            actual["BASE VIAGENS"].defined_names["ManualKey"],
+            source["BASE VIAGENS"].defined_names["ManualKey"],
+        )
+        assert_manual_sheets_preserved(self, actual, source)
+
+    def test_equal_custom_local_name_with_reordered_base_keeps_named_reference(self):
+        book, template = load_workbook(self.current), load_workbook(self.template)
+        self.reorder(book)
+        for workbook in (book, template):
+            workbook["BASE VIAGENS"].defined_names.add(
+                DefinedName(
+                    "ManualKey", attr_text="'BASE VIAGENS'!$A$2", localSheetId=0
+                )
+            )
+        book["APOIO"]["K12"] = "='BASE VIAGENS'!ManualKey"
+        book.save(self.current)
+        template.save(self.template)
+        book.close()
+        template.close()
+        self.build()
+        actual = load_workbook(self.candidate)
+        self.addCleanup(actual.close)
+        self.assertEqual(
+            actual["BASE VIAGENS"].defined_names["ManualKey"].attr_text,
+            "'BASE VIAGENS'!$A$2",
+        )
+        self.assertEqual(actual["APOIO"]["K12"].value, "='BASE VIAGENS'!ManualKey")
+
     def test_unsupported_template_drawing_is_rejected(self):
         from openpyxl.chart import BarChart
 

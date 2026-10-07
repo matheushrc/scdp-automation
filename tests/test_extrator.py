@@ -15,6 +15,7 @@ from scdp_automation.extrator import (
     run,
     save_checkpoint_and_publish,
 )
+from scdp_automation.output_history import OutputHistory
 from scdp_automation.relatorio import Viagem, load_trips, save_json
 
 
@@ -276,8 +277,10 @@ class QueryRetryTests(unittest.IsolatedAsyncioTestCase):
 class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
     def test_checkpoint_is_saved_before_workbook_publication(self) -> None:
         trips = [make_valid_trip("000001/26")]
-        checkpoint = Path("output/checkpoint.json")
-        workbook = Path("output/test-workbook.xlsx")
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        checkpoint = Path(directory.name) / "checkpoint.json"
+        workbook = Path(directory.name) / "test-workbook.xlsx"
         calls: list[str] = []
 
         with (
@@ -290,7 +293,9 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda *_: calls.append("workbook"),
             ) as publish,
         ):
-            result = save_checkpoint_and_publish(trips, checkpoint, workbook)
+            result = save_checkpoint_and_publish(
+                trips, checkpoint, workbook, history=OutputHistory(checkpoint, workbook)
+            )
 
         self.assertEqual(calls, ["checkpoint", "workbook"])
         save.assert_called_once_with(checkpoint, trips)
@@ -311,7 +316,12 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 ) as publish,
                 self.assertRaisesRegex(OSError, "workbook unavailable"),
             ):
-                save_checkpoint_and_publish(trips, checkpoint, workbook)
+                save_checkpoint_and_publish(
+                    trips,
+                    checkpoint,
+                    workbook,
+                    history=OutputHistory(checkpoint, workbook),
+                )
 
             save.assert_called_once_with(checkpoint, trips)
             publish.assert_called_once_with(trips, workbook)
@@ -320,11 +330,102 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 ["000001/26", "000002/26"],
             )
 
+    def test_rollover_publication_failure_keeps_history_until_later_success(self):
+        import os
+
+        from openpyxl import load_workbook
+
+        from tests.support.workbooks import final_template_fixture
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            template = root / "template.xlsx"
+            final_template_fixture(template)
+            output = root / "output"
+            output.mkdir()
+            old_json = output / "viagens_scdp_2026.json"
+            old_book = output / "gastos_scdp_2026.xlsx"
+            old_trips = [make_valid_trip("000001/26")]
+            save_json(old_json, old_trips)
+            xlsx_output.publish_workbook(old_trips, old_book, template_path=template)
+            old = load_workbook(old_book)
+            old["APOIO"]["D2"] = 5000
+            old.save(old_book)
+            old.close()
+            old_contents = (old_json.read_bytes(), old_book.read_bytes())
+            backup = output / "backup"
+            backup.mkdir()
+            prior_contents = {}
+            for index in range(5):
+                identifier = f"20260101T00000000000{index}Zabcdefgh".replace(
+                    "abcdefgh", "abcdef01"
+                )
+                for stem, extension in (
+                    ("viagens_scdp_2026", "json"),
+                    ("gastos_scdp_2026", "xlsx"),
+                ):
+                    path = backup / f"{stem}.history.{identifier}.{extension}"
+                    path.write_text(f"previous-{index}-{extension}")
+                    prior_contents[path] = path.read_bytes()
+            manual_recovery = backup / "recovery.manual.xlsx"
+            manual_recovery.write_text("manual")
+            new_json = output / "viagens_scdp_2027.json"
+            new_book = output / "gastos_scdp_2027.xlsx"
+            trips = [make_valid_trip("000002/27")]
+            replace = os.replace
+
+            def block_workbook(source, destination):
+                if str(source).endswith(".candidate.xlsx"):
+                    raise PermissionError("Excel holds workbook")
+                return replace(source, destination)
+
+            with patch.object(xlsx_output, "DEFAULT_TEMPLATE", template):
+                with (
+                    OutputHistory(new_json, new_book) as history,
+                    patch(
+                        "scdp_automation.xlsx_output.os.replace",
+                        side_effect=block_workbook,
+                    ),
+                    self.assertRaises(xlsx_output.WorkbookPublishError),
+                ):
+                    save_checkpoint_and_publish(
+                        trips, new_json, new_book, history=history
+                    )
+                self.assertEqual(
+                    (old_json.read_bytes(), old_book.read_bytes()), old_contents
+                )
+                self.assertTrue(
+                    all(
+                        path.read_bytes() == content
+                        for path, content in prior_contents.items()
+                    )
+                )
+                recoveries = list(backup.glob("recovery.*.xlsx"))
+                self.assertEqual(len(recoveries), 2)
+                self.assertFalse(list(output.glob("*.candidate.xlsx")))
+                self.assertFalse(new_book.exists())
+                with OutputHistory(new_json, new_book) as history:
+                    save_checkpoint_and_publish(
+                        trips, new_json, new_book, history=history
+                    )
+                    save_checkpoint_and_publish(
+                        trips, new_json, new_book, history=history
+                    )
+            self.assertFalse(old_json.exists())
+            self.assertFalse(old_book.exists())
+            self.assertEqual(list(backup.glob("recovery.*.xlsx")), [manual_recovery])
+            self.assertEqual(len(list(backup.glob("*.history.*"))), 8)
+            new = load_workbook(new_book)
+            self.addCleanup(new.close)
+            self.assertEqual(new["BASE VIAGENS"]["A2"].value, "000002/27")
+            self.assertNotEqual(new["APOIO"]["D2"].value, 5000)
+
     async def run_with_mocks(
         self,
         trips: list[Viagem],
         args: list[str],
         backup_path: Path | None,
+        verify_session: bool = False,
     ) -> tuple[MagicMock, Mock, AsyncMock, Mock]:
         page = MagicMock()
         page.url = "https://www2.scdp.gov.br/novoscdp/home.xhtml"
@@ -337,13 +438,45 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         playwright_manager = MagicMock()
         playwright_manager.__aenter__ = AsyncMock(return_value=object())
         playwright_manager.__aexit__ = AsyncMock(return_value=False)
-        workbook_publisher = Mock(return_value=backup_path)
-        pending_descriptions = AsyncMock()
+        session = OutputHistory(DEFAULT_OUTPUT, xlsx_output.DEFAULT_WORKBOOK)
+        observed = []
+
+        def check_session(stage):
+            if verify_session:
+                from filelock import FileLock, Timeout
+
+                contender = FileLock(session.lock.lock_file, timeout=0)
+                with (
+                    self.assertRaises(Timeout, msg=f"session unlocked during {stage}"),
+                    contender,
+                ):
+                    pass
+                observed.append(stage)
+
+        def read_previous(*_):
+            check_session("load")
+            return []
+
+        async def connect(*_):
+            check_session("browser")
+            return browser
+
+        def publish(*_):
+            check_session("publish")
+
+        def checkpoint(*_):
+            check_session("checkpoint")
+
+        async def consult(*_):
+            check_session("pending")
+
+        workbook_publisher = Mock(side_effect=publish)
+        pending_descriptions = AsyncMock(side_effect=consult)
         logger_info = Mock()
 
         with (
             patch("scdp_automation.extrator.configure_logging"),
-            patch("scdp_automation.extrator.load_trips", return_value=[]),
+            patch("scdp_automation.extrator.load_trips", side_effect=read_previous),
             patch(
                 "scdp_automation.extrator.async_playwright",
                 return_value=playwright_manager,
@@ -356,7 +489,7 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch("scdp_automation.extrator.Path.is_file", return_value=True),
             patch(
                 "scdp_automation.extrator.connect_visible_chrome",
-                new=AsyncMock(return_value=browser),
+                new=AsyncMock(side_effect=connect),
             ),
             patch("scdp_automation.extrator.start_login_if_needed", new=AsyncMock()),
             patch("scdp_automation.extrator.wait_for_login", new=AsyncMock()),
@@ -365,7 +498,7 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 "scdp_automation.extrator.collect_listing",
                 new=AsyncMock(return_value=trips),
             ),
-            patch("scdp_automation.extrator.save_json"),
+            patch("scdp_automation.extrator.save_json", side_effect=checkpoint),
             patch("scdp_automation.extrator.OutputHistory") as history_factory,
             patch("scdp_automation.extrator.publish_workbook", new=workbook_publisher),
             patch(
@@ -374,10 +507,39 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch("scdp_automation.extrator.logger.info", new=logger_info),
         ):
+            if verify_session:
+                history_factory.return_value = session
+                with (
+                    patch.object(session, "archive_previous", return_value=backup_path),
+                    patch.object(session, "prune"),
+                ):
+                    await run(args)
+                self.assertEqual(
+                    observed,
+                    [
+                        "load",
+                        "browser",
+                        "checkpoint",
+                        "publish",
+                        "pending",
+                        "checkpoint",
+                        "publish",
+                    ],
+                )
+                self.assertFalse(session.lock.is_locked)
+                return page, workbook_publisher, pending_descriptions, logger_info
+            history_factory.return_value.__enter__.return_value = (
+                history_factory.return_value
+            )
             history_factory.return_value.archive_previous.return_value = backup_path
             await run(args)
 
         return page, workbook_publisher, pending_descriptions, logger_info
+
+    async def test_output_session_covers_json_browser_checkpoints_and_publications(
+        self,
+    ):
+        await self.run_with_mocks([make_valid_trip()], [], None, verify_session=True)
 
     async def test_limit_does_not_skip_workbook_publication(self) -> None:
         trips = [
@@ -392,9 +554,7 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(workbook_publisher.call_count, 2)
-        workbook_publisher.assert_called_with(
-            trips, xlsx_output.DEFAULT_WORKBOOK, create_backup=False
-        )
+        workbook_publisher.assert_called_with(trips, xlsx_output.DEFAULT_WORKBOOK)
         pending.assert_awaited_once_with(page, trips, [trips[0]], DEFAULT_OUTPUT)
 
     async def test_classification_reminder_has_no_trip_data(self) -> None:
@@ -407,9 +567,7 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(workbook_publisher.call_count, 2)
-        workbook_publisher.assert_called_with(
-            [trip], xlsx_output.DEFAULT_WORKBOOK, create_backup=False
-        )
+        workbook_publisher.assert_called_with([trip], xlsx_output.DEFAULT_WORKBOOK)
         log_calls = repr(logger_info.call_args_list)
         for secret in secrets:
             self.assertNotIn(secret, log_calls)

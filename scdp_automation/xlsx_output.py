@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
-import shutil
-import tempfile
 from collections.abc import Sequence
 from copy import copy
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 from zipfile import BadZipFile
 from zoneinfo import ZoneInfo
 
-from filelock import FileLock, Timeout
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 from openpyxl.utils.exceptions import InvalidFileException
@@ -41,15 +37,6 @@ _TEMPLATE_ROOT = (
 )
 DEFAULT_TEMPLATE = _TEMPLATE_ROOT / "input" / "gastos_scdp_template.xlsx"
 BASE_TABLE_NAME = "tblBaseViagens"
-FILELOCK_TIMEOUT = 30
-
-
-class WorkbookLockedError(TimeoutError):
-    """The output lock could not be acquired before its timeout."""
-
-
-class WorkbookBackupError(OSError):
-    """The existing workbook could not be backed up before replacement."""
 
 
 class WorkbookPublishError(RuntimeError):
@@ -297,69 +284,33 @@ def _candidate_path_for(workbook_path: Path) -> Path:
     )
 
 
-def _backup_path_for(workbook_path: Path) -> Path:
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    backup = workbook_path.with_name(
-        f"{workbook_path.stem}.backup.{timestamp}{workbook_path.suffix}"
-    )
-    if backup.exists():
-        backup = backup.with_name(f"{backup.stem}.{uuid4().hex[:8]}{backup.suffix}")
-    return backup
-
-
-def _workbook_lock_path(workbook_path: Path) -> str:
-    identifier = hashlib.sha256(str(workbook_path.resolve()).encode()).hexdigest()
-    return str(Path(tempfile.gettempdir()) / f"scdp-workbook-{identifier}.lock")
-
-
 def publish_workbook(
     trips: Sequence[Viagem],
     workbook_path: Path = DEFAULT_WORKBOOK,
     *,
     template_path: Path | None = None,
-    create_backup: bool = True,
-) -> Path | None:
-    """Serialize refreshes, validate a neighboring candidate, then replace atomically."""
+) -> None:
+    """Validate and atomically publish; OutputHistory owns session serialization."""
     workbook_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = _workbook_lock_path(workbook_path)
-    lock = FileLock(lock_path, timeout=FILELOCK_TIMEOUT)
+    candidate = _candidate_path_for(workbook_path)
     try:
-        with lock:
-            candidate = _candidate_path_for(workbook_path)
-            candidate_retained = False
-            try:
-                if template_path is None:
-                    build_candidate(trips, workbook_path, candidate)
-                else:
-                    build_candidate(
-                        trips, workbook_path, candidate, template_path=template_path
-                    )
-                _validate_candidate(candidate)
-                backup: Path | None = None
-                if create_backup and workbook_path.exists():
-                    backup = _backup_path_for(workbook_path)
-                    try:
-                        shutil.copy2(workbook_path, backup)
-                    except OSError as error:
-                        backup.unlink(missing_ok=True)
-                        raise WorkbookBackupError(
-                            f"Não foi possível criar o backup em {backup}; "
-                            f"o workbook publicado permanece intacto: {error}"
-                        ) from error
-                try:
-                    os.replace(candidate, workbook_path)
-                except OSError as error:
-                    candidate_retained = True
-                    raise WorkbookPublishError(
-                        "Não foi possível substituir o workbook; feche o arquivo no Excel e "
-                        f"tente novamente. O candidato validado permanece em {candidate}."
-                    ) from error
-                return backup
-            except Exception:
-                if not candidate_retained:
-                    candidate.unlink(missing_ok=True)
-                raise
-    except Timeout as error:
-        raise WorkbookLockedError(
-            f"O workbook está em uso por outra atualização; feche-o e tente novamente: {workbook_path}"
-        ) from error
+        if template_path is None:
+            build_candidate(trips, workbook_path, candidate)
+        else:
+            build_candidate(
+                trips, workbook_path, candidate, template_path=template_path
+            )
+        _validate_candidate(candidate)
+        try:
+            os.replace(candidate, workbook_path)
+        except OSError as error:
+            recovery_directory = workbook_path.parent / "backup"
+            recovery_directory.mkdir(parents=True, exist_ok=True)
+            recovery = recovery_directory / f"recovery.{uuid4().hex}.xlsx"
+            candidate.rename(recovery)
+            raise WorkbookPublishError(
+                "Não foi possível substituir o workbook; feche o arquivo no Excel e "
+                f"tente novamente. O candidato validado permanece em {recovery}."
+            ) from error
+    finally:
+        candidate.unlink(missing_ok=True)

@@ -377,14 +377,12 @@ def save_checkpoint_and_publish(
     checkpoint_path: Path,
     workbook_path: Path = DEFAULT_WORKBOOK,
     *,
-    history: OutputHistory | None = None,
+    history: OutputHistory,
 ) -> Path | None:
     """Persist the complete JSON checkpoint before refreshing the workbook."""
-    backup = history.archive_previous() if history is not None else None
+    backup = history.archive_previous()
     save_json(checkpoint_path, trips)
-    if history is None:
-        return publish_workbook(trips, workbook_path)
-    publish_workbook(trips, workbook_path, create_backup=False)
+    publish_workbook(trips, workbook_path)
     history.prune()
     return backup
 
@@ -394,90 +392,94 @@ async def run(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     output = args.output
     workbook_path = args.workbook
-    history = OutputHistory(output, workbook_path)
-    previous = {v.numero_da_solicitacao: v for v in load_trips(output)}
+    with OutputHistory(output, workbook_path) as history:
+        previous = {v.numero_da_solicitacao: v for v in load_trips(output)}
 
-    async with async_playwright() as playwright:
-        # Todas as abas usam o mesmo perfil Chrome e a mesma sessão autenticada.
-        user_data_dir = Path(__file__).resolve().parents[1] / ".scdp-browser"
-        profile_directory = selected_profile_directory(user_data_dir)
-        if (
-            not (user_data_dir / profile_directory).is_dir()
-            or not (user_data_dir / "Local State").is_file()
-        ):
-            raise RuntimeError(
-                "A cópia local do perfil Chrome selecionado está incompleta em "
-                f"{user_data_dir}. Confirme que o perfil selecionado e Local State existem."
+        async with async_playwright() as playwright:
+            # Todas as abas usam o mesmo perfil Chrome e a mesma sessão autenticada.
+            user_data_dir = Path(__file__).resolve().parents[1] / ".scdp-browser"
+            profile_directory = selected_profile_directory(user_data_dir)
+            if (
+                not (user_data_dir / profile_directory).is_dir()
+                or not (user_data_dir / "Local State").is_file()
+            ):
+                raise RuntimeError(
+                    "A cópia local do perfil Chrome selecionado está incompleta em "
+                    f"{user_data_dir}. Confirme que o perfil selecionado e Local State existem."
+                )
+            logger.info("Abrindo ou conectando ao Chrome visível.")
+            browser = await connect_visible_chrome(playwright, user_data_dir)
+            if not browser.contexts:
+                raise RuntimeError("O Chrome conectado não expôs um contexto padrão.")
+            context = browser.contexts[0]
+            pages = context.pages
+            page = next(
+                (
+                    candidate
+                    for candidate in pages
+                    if urlsplit(candidate.url).hostname
+                    in {"www2.scdp.gov.br", "sso.acesso.gov.br", "acesso.gov.br"}
+                ),
+                pages[0] if pages else await context.new_page(),
             )
-        logger.info("Abrindo ou conectando ao Chrome visível.")
-        browser = await connect_visible_chrome(playwright, user_data_dir)
-        if not browser.contexts:
-            raise RuntimeError("O Chrome conectado não expôs um contexto padrão.")
-        context = browser.contexts[0]
-        pages = context.pages
-        page = next(
-            (
-                candidate
-                for candidate in pages
-                if urlsplit(candidate.url).hostname
-                in {"www2.scdp.gov.br", "sso.acesso.gov.br", "acesso.gov.br"}
-            ),
-            pages[0] if pages else await context.new_page(),
-        )
-        await page.bring_to_front()
-        if page.url == "about:blank" or urlsplit(page.url).hostname not in {
-            "www2.scdp.gov.br",
-            "sso.acesso.gov.br",
-            "acesso.gov.br",
-        }:
-            logger.info("Abrindo o SCDP na aba inicial do Chrome.")
-            await page.goto(SCDP_URL, wait_until="domcontentloaded")
-        logger.info("Página SCDP carregada no navegador visível.")
-        await start_login_if_needed(page)
-        await wait_for_login(page)
-        await open_annual_cch_report(page, args.ano)
+            await page.bring_to_front()
+            if page.url == "about:blank" or urlsplit(page.url).hostname not in {
+                "www2.scdp.gov.br",
+                "sso.acesso.gov.br",
+                "acesso.gov.br",
+            }:
+                logger.info("Abrindo o SCDP na aba inicial do Chrome.")
+                await page.goto(SCDP_URL, wait_until="domcontentloaded")
+            logger.info("Página SCDP carregada no navegador visível.")
+            await start_login_if_needed(page)
+            await wait_for_login(page)
+            await open_annual_cch_report(page, args.ano)
 
-        logger.info("Coletando todas as páginas do relatório Viagem.")
-        trips = await collect_listing(page)
-        for trip in trips:
-            old = previous.get(trip.numero_da_solicitacao)
-            if old is not None:
-                trip.descricao_do_motivo_da_viagem = old.descricao_do_motivo_da_viagem
-                trip.data_da_ultima_verificacao = old.data_da_ultima_verificacao
-        backup = save_checkpoint_and_publish(
-            trips, output, workbook_path, history=history
-        )
-        logger.info("Workbook de gastos atualizado em {}.", workbook_path.resolve())
-        if backup is None:
-            logger.info("Nenhum backup anterior existia para o workbook.")
-        else:
-            logger.info("Backup anterior do workbook em {}.", backup.resolve())
-        logger.info(
-            "Classifique PCDPs sem código na última coluna de BASE VIAGENS e "
-            "preencha as alocações anuais em APOIO."
-        )
-        pending = [
-            v
-            for v in trips
-            if needs_verification(v, datetime.now(ZoneInfo("America/Sao_Paulo")).date())
-        ]
-        if args.limite:
-            pending = pending[: args.limite]
-        logger.info(
-            "{} solicitações no relatório; {} descrições pendentes.",
-            len(trips),
-            len(pending),
-        )
-        await collect_pending_descriptions(page, trips, pending, output)
-        save_checkpoint_and_publish(trips, output, workbook_path, history=history)
-        remaining = sum(v.descricao_do_motivo_da_viagem is None for v in trips)
-        logger.info("JSON atualizado em {}.", output.resolve())
-        logger.info("Descrições pendentes: {}.", remaining)
-        # Desconecta o Playwright sem fechar o Chrome visível.
-        logger.info("Desconectando o Playwright; o Chrome permanecerá aberto.")
-        try:
-            await asyncio.wait_for(browser.close(), timeout=5)
-        except TimeoutError:
-            logger.warning(
-                "A desconexão excedeu 5 segundos; os arquivos foram gravados."
+            logger.info("Coletando todas as páginas do relatório Viagem.")
+            trips = await collect_listing(page)
+            for trip in trips:
+                old = previous.get(trip.numero_da_solicitacao)
+                if old is not None:
+                    trip.descricao_do_motivo_da_viagem = (
+                        old.descricao_do_motivo_da_viagem
+                    )
+                    trip.data_da_ultima_verificacao = old.data_da_ultima_verificacao
+            backup = save_checkpoint_and_publish(
+                trips, output, workbook_path, history=history
             )
+            logger.info("Workbook de gastos atualizado em {}.", workbook_path.resolve())
+            if backup is None:
+                logger.info("Nenhum backup anterior existia para o workbook.")
+            else:
+                logger.info("Backup anterior do workbook em {}.", backup.resolve())
+            logger.info(
+                "Classifique PCDPs sem código na última coluna de BASE VIAGENS e "
+                "preencha as alocações anuais em APOIO."
+            )
+            pending = [
+                v
+                for v in trips
+                if needs_verification(
+                    v, datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+                )
+            ]
+            if args.limite:
+                pending = pending[: args.limite]
+            logger.info(
+                "{} solicitações no relatório; {} descrições pendentes.",
+                len(trips),
+                len(pending),
+            )
+            await collect_pending_descriptions(page, trips, pending, output)
+            save_checkpoint_and_publish(trips, output, workbook_path, history=history)
+            remaining = sum(v.descricao_do_motivo_da_viagem is None for v in trips)
+            logger.info("JSON atualizado em {}.", output.resolve())
+            logger.info("Descrições pendentes: {}.", remaining)
+            # Desconecta o Playwright sem fechar o Chrome visível.
+            logger.info("Desconectando o Playwright; o Chrome permanecerá aberto.")
+            try:
+                await asyncio.wait_for(browser.close(), timeout=5)
+            except TimeoutError:
+                logger.warning(
+                    "A desconexão excedeu 5 segundos; os arquivos foram gravados."
+                )

@@ -1,5 +1,4 @@
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -265,27 +264,23 @@ class WorkbookPublicationTests(unittest.TestCase):
             self.assertTrue(path.exists())
             self.assertEqual(list(Path(directory).glob("*.backup.*.xlsx")), [])
 
-    def test_refresh_creates_timestamped_backup_before_replace(self) -> None:
+    def test_refresh_preserves_manual_data_without_publisher_backup(self) -> None:
         trip = make_trip()
-
         with TemporaryDirectory() as directory:
             path = Path(directory) / "gastos.xlsx"
-            self.assertIsNone(publish_workbook([trip], path))
+            publish_workbook([trip], path)
             from openpyxl import load_workbook
 
             original = load_workbook(path)
             original["APOIO"]["D2"] = 5000.0
             original.save(path)
-            original_bytes = path.read_bytes()
-
-            backup = publish_workbook([trip], path)
-
-            self.assertIsNotNone(backup)
-            assert backup is not None
-            self.assertTrue(backup.exists())
-            self.assertIn(".backup.", backup.name)
-            self.assertEqual(backup.read_bytes(), original_bytes)
-            refreshed = load_workbook(path, data_only=False)
+            original.close()
+            self.assertIsNone(publish_workbook([trip], path))
+            self.assertEqual(
+                {p.name for p in Path(directory).iterdir()}, {"gastos.xlsx"}
+            )
+            refreshed = load_workbook(path)
+            self.addCleanup(refreshed.close)
             self.assertEqual(refreshed["APOIO"]["D2"].value, 5000.0)
 
     def test_invalid_candidate_keeps_published_workbook_unchanged(self) -> None:
@@ -318,27 +313,6 @@ class WorkbookPublicationTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).glob("*.backup.*.xlsx")), [])
             self.assertEqual(list(Path(directory).glob("*.candidate.xlsx")), [])
 
-    def test_backup_failure_keeps_published_workbook_unchanged(self) -> None:
-        trip = make_trip()
-
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "gastos.xlsx"
-            publish_workbook([trip], path)
-            original_bytes = path.read_bytes()
-
-            with (
-                patch(
-                    "scdp_automation.xlsx_output.shutil.copy2",
-                    side_effect=OSError("falha de backup"),
-                ),
-                self.assertRaisesRegex(OSError, "workbook publicado permanece intacto"),
-            ):
-                publish_workbook([trip], path)
-
-            self.assertEqual(path.read_bytes(), original_bytes)
-            self.assertEqual(list(Path(directory).glob("*.backup.*.xlsx")), [])
-            self.assertEqual(list(Path(directory).glob("*.candidate.xlsx")), [])
-
     def test_replace_failure_retains_validated_candidate(self) -> None:
         trip = make_trip()
 
@@ -357,39 +331,17 @@ class WorkbookPublicationTests(unittest.TestCase):
                 publish_workbook([trip], path)
 
             self.assertEqual(path.read_bytes(), original_bytes)
-            candidates = list(Path(directory).glob("*.candidate.xlsx"))
-            self.assertEqual(len(candidates), 1)
-            self.assertTrue(candidates[0].is_file())
-            self.assertEqual(len(list(Path(directory).glob("*.backup.*.xlsx"))), 1)
+            self.assertEqual(list(Path(directory).glob("*.candidate.xlsx")), [])
+            recoveries = list((Path(directory) / "backup").glob("recovery.*.xlsx"))
+            self.assertEqual(len(recoveries), 1)
+            self.assertTrue(recoveries[0].is_file())
+            from openpyxl import load_workbook
 
-    def test_locked_workbook_reports_close_and_retry(self) -> None:
-        from filelock import FileLock
-
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "gastos.xlsx"
-            from scdp_automation.xlsx_output import _workbook_lock_path
-
-            lock = FileLock(_workbook_lock_path(path), timeout=0.1)
-            with (
-                lock,
-                patch("scdp_automation.xlsx_output.FILELOCK_TIMEOUT", 0.01),
-                self.assertRaisesRegex(TimeoutError, "feche-o e tente novamente"),
-            ):
-                publish_workbook([make_trip()], path)
-
-    def test_concurrent_publishers_are_serialized(self) -> None:
-        trip = make_trip()
-
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "gastos.xlsx"
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                results = list(
-                    executor.map(lambda _: publish_workbook([trip], path), range(2))
-                )
-
-            self.assertCountEqual([result is None for result in results], [True, False])
-            self.assertTrue(path.exists())
-            self.assertEqual(len(list(Path(directory).glob("*.backup.*.xlsx"))), 1)
+            recovered = load_workbook(recoveries[0])
+            self.addCleanup(recovered.close)
+            self.assertEqual(
+                recovered["BASE VIAGENS"]["A2"].value, trip.numero_da_solicitacao
+            )
 
 
 class WorkbookValidationTests(unittest.TestCase):

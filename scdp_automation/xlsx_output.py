@@ -86,9 +86,10 @@ def _load_workbook_for_refresh(
     elif role == "Workbook publicado":
         source = template_path or DEFAULT_TEMPLATE
         recovery = (
-            f"O template de origem é {source}. Para começar novamente, primeiro "
-            f"preserve/mova a pasta de saída {path.parent} inteira, incluindo JSON "
-            "e históricos, para fora da saída ativa; depois execute novamente. "
+            f"O template de origem é {source}. Preserve o JSON e a planilha. "
+            "Para uma BASE reconhecida, use --recriar-planilha sem repetir a coleta. "
+            "Incompatibilidades de APOIO/RESUMO GASTOS exigem reconciliação explícita "
+            "das folhas manuais; o JSON sozinho não recupera suas edições. "
             "git pull/reset não altera a saída gerada localmente."
         )
     else:

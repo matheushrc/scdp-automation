@@ -12,6 +12,9 @@
 ## Workbook contract
 
 - The required read-only `input/gastos_scdp_template.xlsx` (layout version 10) is the source of the workbook layout. Existing output supplies manual data on refresh.
+- Use `uv run python -m scdp_automation --recriar-planilha` for offline recovery from an existing valid annual JSON; never prepare Chrome or repeat extraction for a recognized old BASE.
+- Only BASE debit code and discount decision persist in JSON, keyed by full PCDP; blank manual cells clear saved values. Segment is a rebuilt formula.
+- APOIO/RESUMO edits remain output-owned and cannot be recovered from JSON alone. Preserve them; incompatible manual contracts (including APOIO9) require explicit reconciliation, not a marker change or output deletion. Header aliases must be explicit; do not infer identity by column position.
 - APOIO manual monetary inputs are D/E/G, PPGEL + allocation weights are H:J, and category totals are K.
 - Do not reintroduce legacy layout migrators, imports or APOIO/resumo generators without an explicit requirement. Preserve the final template and manual worksheets.
 

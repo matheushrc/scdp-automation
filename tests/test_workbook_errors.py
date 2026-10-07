@@ -87,11 +87,14 @@ class WorkbookErrorTests(unittest.TestCase):
             "APOIO",
             str(self.template),
             "JSON",
-            "históricos",
-            "fora",
+            "--recriar-planilha",
+            "reconciliação explícita",
+            "JSON sozinho não recupera",
             "git pull",
         ):
             self.assertIn(text, message)
+        self.assertNotIn("começar novamente", message)
+        self.assertNotIn("fora da saída ativa", message)
         self.assertIsInstance(caught.exception.__cause__, WorkbookValidationError)
         self.assertEqual(before, (self.output.read_bytes(), self.template.read_bytes()))
 

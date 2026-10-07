@@ -140,7 +140,19 @@ Ao adicionar linhas em `BASE VIAGENS` ou `APOIO`, copie uma linha existente para
 
 ### Atualizações e backups
 
-A extração usa a planilha existente para atualizar `BASE VIAGENS`, preservando os códigos de débito e as decisões de desconto pela PCDP completa, além das entradas de `APOIO` e dos ajustes de `RESUMO GASTOS`. Não é necessário executar um criador de planilha separadamente.
+Antes de atualizar `BASE VIAGENS`, a extração importa pela PCDP completa os dois preenchimentos manuais da BASE para o JSON: `Código de débito` (`codigo_de_debito`) e `Descontar do curso?` (`descontar_do_curso`). Células apagadas pelo operador limpam o valor persistido; viagens presentes somente no JSON mantêm seus valores. `Segmento` é uma fórmula derivada do código e é reconstruído, sem persistir fórmula ou cache.
+
+Para reconstruir a BASE pelo template atual sem login, perfil Chrome ou consulta ao SCDP, use:
+
+```sh
+uv run python -m scdp_automation --recriar-planilha
+```
+
+O comando usa os caminhos anuais da configuração existente e exige um JSON válido já salvo; não aceita `--login`, `--abrir-navegador` ou `--selecionar-perfil-chrome`. Antes da publicação, incorpora os preenchimentos do XLSX existente e preserva o par anterior em backup. Após uma falha de publicação, feche a planilha no Excel e repita o comando: o checkpoint atualizado permite reconstruir a BASE, enquanto o output anterior e o backup original permanecem preservados. JSON e XLSX não formam uma transação atômica conjunta.
+
+A leitura reconhece colunas pela identidade explícita dos cabeçalhos, mesmo reordenadas: `PCDP` ou `Número da Solicitação`, `Código de débito` ou `Codigo de debito`, e `Descontar do curso?` ou `Descontar do curso`. Cabeçalhos de identificação ou entrada manual desconhecidos, ausentes ou ambíguos, PCDPs duplicadas e PCDPs do XLSX ausentes no JSON exigem reconciliação; a posição da coluna não autoriza inferir seu significado.
+
+As edições de `APOIO` e `RESUMO GASTOS` pertencem ao XLSX existente e não são persistidas no JSON nem substituídas pelas folhas do template. **JSON sozinho recupera os dados da BASE, mas não recupera edições manuais de APOIO/RESUMO.** Sem output, essas folhas vêm do template.
 
 Se a planilha não existir, o sistema copia o template final obrigatório, limpa os dados de `BASE VIAGENS` e escreve somente as viagens coletadas. Nas atualizações seguintes, a saída existente fornece os preenchimentos manuais. A automação preserva valores, fórmulas, estilos, tabelas, validações, nomes, mesclagens, dimensões, tema e impressão de `APOIO` e `RESUMO GASTOS` que o openpyxl suporta. As exceções são `RESUMO GASTOS!M2`, gravada como data Excel com formato `dd/mm/yyyy`, as flags de recálculo e os dados/controles de BASE. O salvamento pode reorganizar o XML interno do XLSX.
 
@@ -167,12 +179,8 @@ Os arquivos em `input/`, `output/` e `logs/`, as cópias de perfil `.scdp-browse
 
 ### Erros de planilha
 
-A mensagem identifica o caminho e distingue o template obrigatório da saída publicada. O layout aceito é somente a versão 10; não altere o marcador de versão para contornar a validação. Se o template estiver ausente ou inválido, restaure `input/gastos_scdp_template.xlsx` com um template final válido.
+A mensagem identifica o caminho e distingue o template obrigatório da saída publicada. O template atual e a candidata final devem satisfazer integralmente o contrato da versão 10; a importação de uma BASE antiga reconhecida não autoriza mudanças arbitrárias no template. Se o template estiver ausente ou inválido, restaure `input/gastos_scdp_template.xlsx` com um template final válido.
 
-`git pull` e `git reset` não atualizam os resultados locais ignorados pelo Git. Se uma saída antiga tiver layout incompatível e você quiser começar novamente, preserve a pasta `output` inteira, incluindo JSON e históricos, fora da saída ativa antes de executar de novo. Na raiz do projeto, o PowerShell pode arquivá-la sem apagar os dados:
+`git pull` e `git reset` não atualizam os resultados locais ignorados pelo Git. Uma BASE com cabeçalhos reconhecidos pode ser recuperada com `--recriar-planilha`, usando o JSON já salvo, sem repetir a extração. Incompatibilidades reais em `APOIO` ou `RESUMO GASTOS`, incluindo APOIO versão 9 com `Transportes pago`, exigem tratamento e reconciliação explícitos das folhas manuais. Preserve JSON, XLSX e históricos; esta entrega não migra APOIO9, não remove sua coluna nem substitui suas edições pelo template. Não altere apenas o marcador de versão para contornar a validação.
 
-```powershell
-Move-Item -LiteralPath .\output -Destination (Join-Path . ("output-arquivado-" + (Get-Date -Format "yyyyMMdd-HHmmss-fffffff")))
-```
-
-Confira os preenchimentos manuais no arquivo arquivado antes de preencher a nova saída. Para erros de acesso, feche a planilha no Excel e confira as permissões do caminho indicado. Uma falha de publicação informa onde a candidata validada foi preservada para recuperação.
+Para erros de acesso, feche a planilha no Excel e confira as permissões do caminho indicado. Uma falha de publicação informa onde a candidata validada foi preservada para recuperação.

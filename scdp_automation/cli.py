@@ -7,6 +7,7 @@ import asyncio
 from urllib.parse import urlsplit
 
 from playwright.async_api import async_playwright
+from pydantic import ValidationError
 
 from scdp_automation.chrome_profile_setup import prepare_chrome_profile
 from scdp_automation.chrome_profiles import (
@@ -22,6 +23,7 @@ from scdp_automation.extrator import (
 )
 from scdp_automation.logging_config import configure_logging, logger
 from scdp_automation.navegador_chrome import connect_visible_chrome, select_scdp_page
+from scdp_automation.workbook_recovery import recreate_workbook
 from scdp_automation.xlsx_output import WorkbookPublishError
 from scdp_automation.xlsx_validation import WorkbookValidationError
 
@@ -69,10 +71,30 @@ def main(argv: list[str] | None = None) -> None:
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--abrir-navegador", action="store_true")
     actions.add_argument("--login", action="store_true")
+    actions.add_argument("--recriar-planilha", action="store_true")
     parser.add_argument("--selecionar-perfil-chrome", action="store_true")
     known, extraction_args = parser.parse_known_args(argv)
     if "-h" in extraction_args or "--help" in extraction_args:
+        parser.print_help()
         parse_args(extraction_args)
+    if known.recriar_planilha:
+        if known.selecionar_perfil_chrome:
+            parser.error("--recriar-planilha não aceita --selecionar-perfil-chrome.")
+        args = parse_args(extraction_args)
+        try:
+            recreate_workbook(args.output, args.workbook)
+        except (
+            WorkbookValidationError,
+            WorkbookPublishError,
+            ValidationError,
+            OSError,
+            UnicodeError,
+        ) as exc:
+            parser.exit(
+                1,
+                f"Erro na recuperação de {args.output}: a recuperação usa JSON existente. {exc}\n",
+            )
+        return
     repo_root = REPO_ROOT
     try:
         prepare_chrome_profile(repo_root, force_reselect=known.selecionar_perfil_chrome)

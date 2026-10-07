@@ -71,15 +71,40 @@ def install_decision_highlighting(base: Worksheet) -> None:
         base.conditional_formatting.add(f"A2:{last}1048576", rule)
 
 
-def _load_workbook_for_refresh(path: Path) -> Workbook:
+def _load_workbook_for_refresh(
+    path: Path, *, role: str = "workbook", template_path: Path | None = None
+) -> Workbook:
+    context = f"{role} em {path}"
+    if role == "Template obrigatório":
+        recovery = "Restaure um template final válido, versão 9, nesse caminho."
+    elif role == "Workbook publicado":
+        source = template_path or DEFAULT_TEMPLATE
+        recovery = (
+            f"O template de origem é {source}. Para começar novamente, primeiro "
+            f"preserve/mova a pasta de saída {path.parent} inteira, incluindo JSON "
+            "e históricos, para fora da saída ativa; depois execute novamente. "
+            "git pull/reset não altera a saída gerada localmente."
+        )
+    else:
+        recovery = ""
     try:
         workbook = load_workbook(path, data_only=False)
+    except PermissionError as error:
+        raise WorkbookValidationError(
+            f"Não foi possível acessar {context}; feche o arquivo no Excel e "
+            "verifique as permissões de acesso."
+        ) from error
     except (OSError, InvalidFileException, BadZipFile, KeyError, ValueError) as error:
         raise WorkbookValidationError(
-            f"Não foi possível abrir o workbook em {path}."
+            f"Não foi possível abrir {context}. {recovery}"
         ) from error
     try:
         validate_workbook(workbook)
+    except WorkbookValidationError as error:
+        workbook.close()
+        raise WorkbookValidationError(
+            f"{context}: {error} {recovery}", missing_pcdps=error.missing_pcdps
+        ) from error
     except Exception:
         workbook.close()
         raise
@@ -95,10 +120,12 @@ def validate_workbook_sources(
         raise WorkbookValidationError(
             "Template e workbook publicado devem ter caminhos separados."
         )
-    template = _load_workbook_for_refresh(source)
+    template = _load_workbook_for_refresh(source, role="Template obrigatório")
     template.close()
     if current_path.exists():
-        current = _load_workbook_for_refresh(current_path)
+        current = _load_workbook_for_refresh(
+            current_path, role="Workbook publicado", template_path=source
+        )
         current.close()
 
 
@@ -246,14 +273,16 @@ def build_candidate(
         raise WorkbookValidationError(
             f"O caminho de candidato já existe: {candidate_path}"
         )
-    template = _load_workbook_for_refresh(source_path)
+    template = _load_workbook_for_refresh(source_path, role="Template obrigatório")
     workbook = template
     try:
         summaries = summarize_trips(trips)
         manual_codes: dict[str, str] = {}
         manual_decisions: dict[str, str | None] = {}
         if current_path.exists():
-            workbook = _load_workbook_for_refresh(current_path)
+            workbook = _load_workbook_for_refresh(
+                current_path, role="Workbook publicado", template_path=source_path
+            )
             base = workbook["BASE VIAGENS"]
             existing_pcdps = {
                 base.cell(row, 1).value
@@ -265,7 +294,7 @@ def build_candidate(
             )
             if missing:
                 raise WorkbookValidationError(
-                    f"A listagem completa está sem {len(missing)} PCDP(s) já publicadas; reconcilie o relatório antes de atualizar.",
+                    f"O workbook publicado em {current_path}: a listagem completa está sem {len(missing)} PCDP(s) já publicadas; reconcilie o relatório antes de atualizar.",
                     missing_pcdps=missing,
                 )
             for row in range(2, base.max_row + 1):
@@ -338,13 +367,13 @@ def publish_workbook(
                 candidate_retained = True
                 surviving_path = candidate if candidate.exists() else recovery
                 raise WorkbookPublishError(
-                    "Não foi possível substituir o workbook nem mover a candidata "
+                    f"Não foi possível substituir o workbook em {workbook_path} nem mover a candidata "
                     f"para recuperação: {recovery_error}. O candidato validado "
                     f"permanece em {surviving_path}; feche o arquivo no Excel e "
                     "tente novamente."
                 ) from error
             raise WorkbookPublishError(
-                "Não foi possível substituir o workbook; feche o arquivo no Excel e "
+                f"Não foi possível substituir o workbook em {workbook_path}; feche o arquivo no Excel e "
                 f"tente novamente. O candidato validado permanece em {recovery}."
             ) from error
     finally:

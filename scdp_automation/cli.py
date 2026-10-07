@@ -22,6 +22,8 @@ from scdp_automation.extrator import (
 )
 from scdp_automation.logging_config import configure_logging, logger
 from scdp_automation.navegador_chrome import connect_visible_chrome, select_scdp_page
+from scdp_automation.xlsx_output import WorkbookPublishError
+from scdp_automation.xlsx_validation import WorkbookValidationError
 
 SCDP_URL = "https://www2.scdp.gov.br/"
 
@@ -83,7 +85,10 @@ def main(argv: list[str] | None = None) -> None:
     elif known.abrir_navegador:
         asyncio.run(open_browser())
     else:
-        asyncio.run(run(extraction_args))
+        try:
+            asyncio.run(run(extraction_args))
+        except (WorkbookValidationError, WorkbookPublishError) as exc:
+            parser.exit(1, f"Erro na planilha: {exc}\n")
 
 
 if __name__ == "__main__":

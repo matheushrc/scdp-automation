@@ -199,7 +199,7 @@ class WorkbookRefreshTests(unittest.TestCase):
             current.write_bytes(b"not an Excel workbook")
             original_bytes = current.read_bytes()
 
-            with self.assertRaisesRegex(ValueError, "abrir o workbook"):
+            with self.assertRaisesRegex(ValueError, "Não foi possível abrir"):
                 build_candidate([make_trip()], current, candidate)
 
             self.assertEqual(current.read_bytes(), original_bytes)

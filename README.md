@@ -164,3 +164,15 @@ uv run ty check
 Para aplicar a formatação Python, use `uv run ruff format .`. Após alterar dependências, execute `uv sync`.
 
 Os arquivos em `input/`, `output/` e `logs/`, as cópias de perfil `.scdp-browser*`, `.scdp-config.toml` e `.env` são locais e ignorados pelo Git. Não publique credenciais, perfis de navegador, resultados ou planilhas privadas.
+
+### Erros de planilha
+
+A mensagem identifica o caminho e distingue o template obrigatório da saída publicada. O layout aceito é somente a versão 9; não altere o marcador de versão para contornar a validação. Se o template estiver ausente ou inválido, restaure `input/gastos_scdp_template.xlsx` com um template final válido.
+
+`git pull` e `git reset` não atualizam os resultados locais ignorados pelo Git. Se uma saída antiga tiver layout incompatível e você quiser começar novamente, preserve a pasta `output` inteira, incluindo JSON e históricos, fora da saída ativa antes de executar de novo. Na raiz do projeto, o PowerShell pode arquivá-la sem apagar os dados:
+
+```powershell
+Move-Item -LiteralPath .\output -Destination (Join-Path . ("output-arquivado-" + (Get-Date -Format "yyyyMMdd-HHmmss-fffffff")))
+```
+
+Confira os preenchimentos manuais no arquivo arquivado antes de preencher a nova saída. Para erros de acesso, feche a planilha no Excel e confira as permissões do caminho indicado. Uma falha de publicação informa onde a candidata validada foi preservada para recuperação.

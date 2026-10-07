@@ -84,7 +84,9 @@ def validate_workbook(workbook: Workbook) -> None:
     version = workbook.defined_names.get("SCDPLayoutVersion")
     if version is None or version.attr_text != '"9"':
         raise WorkbookValidationError(
-            "Versão do layout inválida; use o template final versão 9."
+            f"Versão do layout inválida: esperada 9; observada "
+            f"{version.attr_text if version is not None else 'ausente (marcador SCDPLayoutVersion)'}. "
+            "Use o template final versão 9."
         )
     base, support = workbook["BASE VIAGENS"], workbook["APOIO"]
     for sheet, headers in ((base, BASE_HEADERS), (support, SUPPORT_HEADERS)):

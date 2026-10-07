@@ -352,7 +352,8 @@ def preflight_extraction(checkpoint_path: Path, workbook_path: Path) -> None:
     validate_workbook_sources(workbook_path)
     if workbook_path.exists() and not checkpoint_path.is_file():
         raise WorkbookValidationError(
-            "A planilha atual está sem seu checkpoint JSON; reconcilie os arquivos "
+            f"A planilha atual em {workbook_path} está sem seu checkpoint JSON "
+            f"em {checkpoint_path}; reconcilie os arquivos "
             "antes de executar a extração. A planilha foi preservada."
         )
 

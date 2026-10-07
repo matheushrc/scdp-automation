@@ -6,6 +6,8 @@ Sistema para extrair o relatório **Relatórios > Viagem** do SCDP e atualizar a
 
 Instale o [uv](https://docs.astral.sh/uv/) e o Google Chrome. Execute os comandos na raiz do projeto. O projeto requer Python 3.14.5 ou superior, dentro da série 3.14.
 
+Antes de extrair, coloque o template final obrigatório em `input/gastos_scdp_template.xlsx`. Ele deve declarar `SCDPLayoutVersion="9"` e conter, nesta ordem, `BASE VIAGENS`, `APOIO` e `RESUMO GASTOS`. O template é somente leitura; arquivos ausentes, inválidos ou de layouts antigos são recusados, inclusive quando já existe uma saída. Não há conversão de layouts nem geração de uma planilha alternativa.
+
 Instale as dependências:
 
 ```sh
@@ -36,7 +38,9 @@ A extração consulta sempre o ano atual, considerando o fuso de São Paulo. Ao 
 ano = 2026
 ```
 
-O nome da planilha segue sempre `output/gastos_scdp_{ano}.xlsx`, e o JSON segue `output/viagens_scdp_{ano}.json`. Na virada do ano, o sistema passa a usar os arquivos do novo ano e preserva os anteriores. A seleção do perfil Chrome é preservada.
+O nome da planilha segue sempre `output/gastos_scdp_{ano}.xlsx`, e o JSON segue `output/viagens_scdp_{ano}.json`. Na virada do ano, o sistema parte do template para o novo ano, sem copiar viagens ou classificações do ano anterior. O par anterior é arquivado e sai da raiz somente depois da publicação bem-sucedida. A seleção do perfil Chrome é preservada.
+
+Template, JSON, planilha, logs, credenciais e configuração são resolvidos a partir da raiz do projeto/worktree ativo, independentemente do diretório de execução. Execute `uv run --project /caminho/para/scdp python -m scdp_automation` quando estiver fora da raiz. Worktrees usam seus próprios arquivos locais.
 
 ## Comandos da CLI
 
@@ -138,9 +142,13 @@ Ao adicionar linhas em `BASE VIAGENS` ou `APOIO`, copie uma linha existente para
 
 A extração usa a planilha existente para atualizar `BASE VIAGENS`, preservando os códigos de débito e as decisões de desconto pela PCDP completa, além das entradas de `APOIO` e dos ajustes de `RESUMO GASTOS`. Não é necessário executar um criador de planilha separadamente.
 
-Se a planilha não existir, o sistema cria uma nova. Quando disponível, a referência `input/gastos_scdp_template.xlsx` fornece o layout ajustado e os preenchimentos iniciais de APOIO e RESUMO GASTOS; o arquivo de referência é somente lido. Essa referência é uma cópia da planilha de saída com BASE VIAGENS vazia, preparada para servir como ponto de partida. Mantenha a planilha ajustada no caminho de saída para que ela seja usada nas próximas atualizações.
+Se a planilha não existir, o sistema copia o template final obrigatório, limpa os dados de `BASE VIAGENS` e escreve somente as viagens coletadas. Nas atualizações seguintes, a saída existente fornece os preenchimentos manuais. A automação preserva valores, fórmulas, estilos, tabelas, validações, nomes, mesclagens, dimensões, tema e impressão de `APOIO` e `RESUMO GASTOS` que o openpyxl suporta. As exceções são `RESUMO GASTOS!M2`, gravada como data Excel com formato `dd/mm/yyyy`, as flags de recálculo e os dados/controles de BASE. O salvamento pode reorganizar o XML interno do XLSX.
 
-A raiz de `output/` contém a planilha e o JSON atuais. Cada execução arquiva o par anterior uma única vez em `output/backup/`, com data e hora no nome. Após a publicação bem-sucedida, mantém os quatro pares anteriores, totalizando cinco execuções incluindo a atual. A célula `RESUMO GASTOS!M2` recebe a data da atualização dos valores, no fuso de São Paulo. Antes de substituir a planilha, o sistema valida a atualização. Se a nova listagem não contiver alguma PCDP já publicada, a atualização é interrompida para permitir a conferência, preservando a planilha anterior.
+A raiz de `output/` contém a planilha e o JSON atuais. Cada execução arquiva o par anterior uma única vez em `output/backup/`, com data e hora no nome. Após a publicação bem-sucedida, mantém os quatro pares anteriores de todos os anos conjuntamente, totalizando cinco execuções incluindo a atual. Planilha e JSON de cada histórico compartilham o identificador da execução; arquivos manuais e órfãos não são apagados nem completados artificialmente. A célula `RESUMO GASTOS!M2` recebe a data da atualização dos valores, no fuso de São Paulo. Antes de substituir a planilha, o sistema valida a atualização. Se a nova listagem não contiver alguma PCDP já publicada, a atualização é interrompida para permitir a conferência, preservando a planilha anterior.
+
+A execução mantém um lock por diretório de saída desde antes de carregar o checkpoint e acessar o navegador até terminar a extração. Duas execuções no mesmo destino não misturam checkpoints ou históricos. As consultas individuais e a segunda publicação da mesma execução não criam outro histórico.
+
+Se o Excel bloquear a substituição, a planilha anterior permanece e a candidata validada fica em `output/backup/recovery.<id>.xlsx`; o erro informa o caminho. Se esse deslocamento também falhar, o erro indica onde a candidata sobreviveu. Feche o arquivo no Excel e execute novamente. O JSON coletado continua disponível para retomada ou reconciliação; falhas não provocam poda dos históricos. Candidatas de recuperação em backup podem ser removidas após uma publicação posterior bem-sucedida.
 
 ## Desenvolvimento
 

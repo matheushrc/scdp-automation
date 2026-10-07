@@ -1,5 +1,7 @@
 import asyncio
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -584,6 +586,7 @@ class CliLoginTests(unittest.TestCase):
 
         with (
             patch("sys.argv", ["scdp-extrair", "--help"]),
+            redirect_stdout(StringIO()),
             patch("scdp_automation.cli.prepare_chrome_profile") as prepare_profile,
             self.assertRaises(SystemExit) as raised,
         ):

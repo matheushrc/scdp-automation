@@ -9,6 +9,11 @@
 - Do not commit credentials, browser profiles, generated results, or private travel inputs. Review changes under `input/` carefully.
 - Never commit diagnostic scripts, one-off probes, or their output. Keep local diagnostics in `.local-diagnostics/` or outside the repository, and review the staged diff before committing.
 
+## Workbook contract
+
+- The required read-only `input/gastos_scdp_template.xlsx` (layout version 9) is the source of the workbook layout. Existing output supplies manual data on refresh.
+- Do not reintroduce legacy layout migrators, imports or APOIO/resumo generators without an explicit requirement. Preserve the final template and manual worksheets.
+
 ## Test helpers
 
 - Put shared test builders and fixtures in `tests/support/`, grouped by domain. Helpers used by only one test module may stay local to that module.

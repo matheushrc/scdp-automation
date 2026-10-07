@@ -7,12 +7,10 @@ from openpyxl import load_workbook
 from openpyxl.formula.translate import Translator
 
 from scdp_automation.xlsx_output import (
-    _load_workbook_for_refresh,
-    import_reference_workbook,
     install_decision_highlighting,
 )
-from scdp_automation.xlsx_recalculate import recalculate_workbook
-from tests.support.workbooks import reference_fixture
+from tests.support.recalculation import recalculate_workbook
+from tests.support.workbooks import final_template_fixture
 
 
 @unittest.skipUnless(shutil.which("libreoffice"), "LibreOffice necessário")
@@ -20,20 +18,9 @@ class HighlightingTests(unittest.TestCase):
     def test_red_cancellations_and_yellow_missing_segments_in_future_rows(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            reference, output = root / "reference.xlsx", root / "output.xlsx"
-            reference_fixture(reference)
-            import_reference_workbook(reference, output)
+            output = root / "output.xlsx"
+            final_template_fixture(output)
             book = load_workbook(output)
-            base = book["BASE VIAGENS"]
-            base.conditional_formatting._cf_rules.clear()
-            from openpyxl.formatting.rule import FormulaRule
-
-            base.conditional_formatting.add(
-                "A2:Q1048576", FormulaRule(formula=['AND($A2<>"",OR($P2="",$Q2=""))'])
-            )
-            book.save(output)
-            book.close()
-            book = _load_workbook_for_refresh(output)
             base = book["BASE VIAGENS"]
             install_decision_highlighting(base)
             rules = [

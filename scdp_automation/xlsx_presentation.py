@@ -7,11 +7,9 @@ from textwrap import wrap
 
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 BASE_WIDTHS = (15, 26, 18, 12, 14, 14, 14, 14, 14, 14, 16, 15, 15, 15, 48, 17, 20, 16)
-SUPPORT_WIDTHS = (20, 26, 16, 16, 16, 16, 14, 14, 12, 12, 12, 18)
 DATE_HEADERS = {
     "Data de início da viagem",
     "Data de término da viagem",
@@ -51,9 +49,3 @@ def _compact_sheet(sheet: Worksheet, widths: tuple[int, ...]) -> None:
 
 def format_base_sheet(sheet: Worksheet) -> None:
     _compact_sheet(sheet, BASE_WIDTHS)
-
-
-def format_input_sheets(workbook: Workbook) -> None:
-    """Center and wrap inputs, retaining dates as hidden data columns."""
-    format_base_sheet(workbook["BASE VIAGENS"])
-    _compact_sheet(workbook["APOIO"], SUPPORT_WIDTHS)

@@ -12,8 +12,7 @@ from scdp_automation.xlsx_models import summarize_trips
 from tests.support.workbooks import (
     final_template_fixture,
     make_trip,
-    reference_fixture,
-    restore_legacy_group_layout,
+    write_existing_workbook,
 )
 
 
@@ -69,11 +68,16 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.reference = self.root / "reference.xlsx"
-        reference_fixture(self.reference)
+        final_template_fixture(self.reference)
+        default = patch.object(xlsx_output, "DEFAULT_TEMPLATE", self.reference)
+        default.start()
+        self.addCleanup(default.stop)
 
     def test_rateio_required_for_classified_expense_without_budget(self):
-        from scdp_automation.xlsx_adjustments import validate_editable_layout
-        from scdp_automation.xlsx_output import WorkbookValidationError
+        from scdp_automation.xlsx_validation import (
+            WorkbookValidationError,
+            validate_workbook,
+        )
 
         path = self.root / "final.xlsx"
         final_template_fixture(path)
@@ -90,10 +94,11 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
         for column in (4, 5, 7, 8, 9, 10, 11):
             support.cell(rateio_row, column).value = None
         with self.assertRaisesRegex(WorkbookValidationError, "100%"):
-            validate_editable_layout(workbook)
+            validate_workbook(workbook)
         for weights, valid in (
             ((0.5, 0.25, 0.25), True),
             ((0.5, 0.25, 0.20), False),
+            ((0.5, 0.25, 0.2500000005), False),
             ((float("nan"), 0.25, 0.25), False),
             ((True, 0, 0), False),
         ):
@@ -101,18 +106,22 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
                 for column, weight in zip((9, 10, 11), weights, strict=True):
                     support.cell(rateio_row, column).value = weight
                 if valid:
-                    validate_editable_layout(workbook)
+                    validate_workbook(workbook)
                 else:
                     with self.assertRaisesRegex(WorkbookValidationError, "100%"):
-                        validate_editable_layout(workbook)
+                        validate_workbook(workbook)
         base["K2"] = None
         for column in (9, 10, 11):
             support.cell(rateio_row, column).value = None
-        validate_editable_layout(workbook)
+        validate_workbook(workbook)
 
     def test_decisions_and_dates_follow_complete_pcdp(self):
         current, candidate = self.root / "current.xlsx", self.root / "candidate.xlsx"
-        xlsx_output.import_reference_workbook(self.reference, current)
+        write_existing_workbook(
+            current,
+            [make_trip("999001/26"), make_trip("999002/26-1C")],
+            {"999001/26": "AGRONOMIA", "999002/26-1C": "PPGE"},
+        )
         workbook = load_workbook(current)
         base = workbook["BASE VIAGENS"]
         self.assertEqual(base["R1"].value, "Descontar do curso?")
@@ -140,7 +149,11 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
 
     def test_support_order_history_group_and_manual_summary_survive(self):
         current, candidate = self.root / "current.xlsx", self.root / "candidate.xlsx"
-        xlsx_output.import_reference_workbook(self.reference, current)
+        write_existing_workbook(
+            current,
+            [make_trip("999001/26"), make_trip("999002/26-1C")],
+            {"999001/26": "AGRONOMIA", "999002/26-1C": "PPGE"},
+        )
         workbook = load_workbook(current)
         support = workbook["APOIO"]
         self.assertEqual(
@@ -170,7 +183,7 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
                 "=D40+E40",
                 0,
                 0,
-                groups["AGRONOMIA"],
+                None,
             ]
         )
         workbook["RESUMO GASTOS"]["F8"] = "=SUM(1,2)"
@@ -188,210 +201,42 @@ class WorkbookAdjustmentsTests(unittest.TestCase):
         )
 
 
-class HistoricalDecisionsTests(unittest.TestCase):
-    def test_decisions_require_financial_reconciliation_and_zero_is_ambiguous(self):
-        from dataclasses import replace
+class SpendingResultsTests(unittest.TestCase):
+    def test_cancellation_decisions_and_restitution_use_collected_totals_once(self):
+        import shutil
 
-        from openpyxl import Workbook
+        from tests.support.recalculation import recalculate_workbook
 
-        from scdp_automation.xlsx_reference import infer_decisions
-
-        workbook = Workbook()
-        support = workbook.active
-        support.title = "APOIO"
-        support["B41"] = "AGRONOMIA"
-        support["C41"] = 30
-        first = summarize_trips([make_trip("111111/26")])[0]
-        trips = (
-            replace(first, status="Cancelada", trip_total=10),
-            replace(first, pcdp="222222/26", status="Cancelada", trip_total=0),
-            replace(first, pcdp="333333/26", status="Concluída", trip_total=20),
-        )
-        codes = {t.pcdp: "AGRONOMIA" for t in trips}
-        self.assertEqual(
-            infer_decisions(trips, codes, workbook),
-            {"111111/26": "Sim", "333333/26": "Sim"},
-        )
-        support["C41"] = 20
-        self.assertEqual(infer_decisions(trips, codes, workbook)["111111/26"], "Não")
-        support["C41"] = 25
-        self.assertEqual(infer_decisions(trips, codes, workbook), {})
-        workbook.close()
-
-
-class MigrationTests(unittest.TestCase):
-    reference: Path
-    root: Path
-    setUp = WorkbookAdjustmentsTests.setUp
-
-    def test_migration_recovers_historical_decision_and_preserves_manual_budget(self):
-        from openpyxl.workbook.defined_name import DefinedName
-
-        workbook = load_workbook(self.reference)
-        workbook["BD D&P"]["I5"] = "Cancelada"
-        workbook["BD D&P"]["I11"] = "Cancelada"
-        workbook["APOIO"]["B41"] = "AGRONOMIA"
-        workbook["APOIO"]["C41"] = 156
-        workbook.save(self.reference)
-        workbook.close()
-        current, candidate = self.root / "current.xlsx", self.root / "candidate.xlsx"
-        xlsx_output.import_reference_workbook(self.reference, current)
-        workbook = load_workbook(current)
-        restore_legacy_group_layout(workbook)
-        support = workbook["APOIO"]
-        for r in range(2, support.max_row + 1):
-            daily, transport = support.cell(r, 4).value, support.cell(r, 5).value
-            support.cell(r, 5).value = (
-                daily + transport
-                if isinstance(daily, (int, float))
-                and isinstance(transport, (int, float))
-                else None
-            )
-            support.cell(
-                r, 6
-            ).value = f'=IF(AND(ISNUMBER(D{r}),ISNUMBER(E{r})),E{r}-D{r},"")'
-        support["E1"] = "Recurso total (R$)"
-        support["F1"] = "Transportes distribuído (R$)"
-        support["D3"] = 555
-        support["E3"] = 999
-        base = workbook["BASE VIAGENS"]
-        for row in range(1, base.max_row + 1):
-            saved = {col: base.cell(row, col).value for col in range(12, 18)}
-            for old, new in (
-                (15, 12),
-                (16, 13),
-                (17, 14),
-                (12, 15),
-                (13, 16),
-                (14, 17),
-            ):
-                base.cell(row, new).value = saved[old]
-        base.delete_cols(14, 4)
-        workbook.defined_names.add(DefinedName("SCDPLayoutVersion", attr_text='"5"'))
-        workbook.save(current)
-        workbook.close()
-        xlsx_output.build_candidate(
-            [make_trip("999001/26"), make_trip("999002/26-1C")],
-            current,
-            candidate,
-            reference_path=self.reference,
-        )
-        workbook = load_workbook(candidate)
-        self.addCleanup(workbook.close)
-        self.assertEqual(workbook["BASE VIAGENS"]["R2"].value, "Sim")
-        self.assertEqual(workbook["APOIO"]["D3"].value, 555)
-        self.assertEqual(workbook["APOIO"]["E3"].value, 444)
-
-
-class ColumnOrderTests(unittest.TestCase):
-    def test_classification_columns_are_last_in_generated_file(self):
-        self.assertEqual(
-            xlsx_output.BASE_HEADERS[-3:],
-            ("Segmento", "Código de débito", "Descontar do curso?"),
-        )
-        self.assertEqual(
-            xlsx_output.BASE_HEADERS[11:14],
-            (
-                "Data de início da viagem",
-                "Data de término da viagem",
-                "Data da última verificação",
-            ),
-        )
-
-    def test_existing_v6_reorders_dates_and_unifies_history_without_losing_values(self):
-        from copy import copy
-
-        from openpyxl.workbook.defined_name import DefinedName
-
+        if not shutil.which("libreoffice"):
+            self.skipTest("LibreOffice necessário")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            reference, current, candidate = (
-                root / "reference.xlsx",
-                root / "current.xlsx",
-                root / "candidate.xlsx",
+            template, current, candidate = (
+                root / name
+                for name in ("template.xlsx", "current.xlsx", "candidate.xlsx")
             )
-            reference_fixture(reference)
-            xlsx_output.import_reference_workbook(reference, current)
-            workbook = load_workbook(current)
-            restore_legacy_group_layout(workbook)
-            support = workbook["APOIO"]
-            history_row = next(
-                r
-                for r in range(2, support.max_row + 1)
-                if support.cell(r, 1).value == "PPGH/PPGDH"
-            )
-            support.insert_rows(history_row + 1)
-            for col in range(1, 14):
-                support.cell(history_row + 1, col).value = support.cell(
-                    history_row, col
-                ).value
-                support.cell(history_row + 1, col)._style = copy(
-                    support.cell(history_row, col)._style
-                )
-            support.cell(history_row, 1).value = "PPGH"
-            support.cell(history_row + 1, 1).value = "PPGDH"
-            support.cell(history_row + 1, 4).value = 100
-            support.cell(history_row + 1, 5).value = 200
-            manual_row = history_row + 2
-            support.cell(manual_row, 6).value = "=1+2"
-            support.cell(manual_row, 13).value = "=3+4"
-            workbook["RESUMO GASTOS"]["F8"] = f"=APOIO!D{manual_row}"
-            workbook["RESUMO GASTOS"]["M8"] = "=COUNT('BASE VIAGENS'!O2:O3)"
-            base = workbook["BASE VIAGENS"]
-            base["P2"], base["P3"] = "PPGH", "PPGDH"
-            base["Q2"], base["Q3"] = "Não", "Sim"
-            base["L2"] = date(2026, 1, 10)
-            for row in range(1, base.max_row + 1):
-                saved = {col: base.cell(row, col).value for col in range(12, 18)}
-                for old, new in (
-                    (15, 12),
-                    (16, 13),
-                    (17, 14),
-                    (12, 15),
-                    (13, 16),
-                    (14, 17),
-                ):
-                    base.cell(row, new).value = saved[old]
-            workbook.defined_names.add(
-                DefinedName("SCDPLayoutVersion", attr_text='"6"')
-            )
-            workbook.save(current)
-            workbook.close()
-            before = current.read_bytes()
-            from scdp_automation.xlsx_reference import read_reference
-
-            xlsx_output.build_candidate(
-                read_reference(reference).trips, current, candidate
-            )
-            self.assertEqual(current.read_bytes(), before)
-            workbook = load_workbook(candidate)
-            self.addCleanup(workbook.close)
-            base = workbook["BASE VIAGENS"]
-            self.assertEqual(
-                [base.cell(1, c).value for c in (16, 17, 18)],
-                ["Segmento", "Código de débito", "Descontar do curso?"],
-            )
-            self.assertEqual(
-                [base.cell(r, 17).value for r in (2, 3)], ["PPGH/PPGDH", "PPGH/PPGDH"]
-            )
-            self.assertEqual([base.cell(r, 18).value for r in (2, 3)], ["Não", "Sim"])
-            self.assertEqual(base["L2"].value.date(), date(2026, 1, 10))
-            support = workbook["APOIO"]
-            history = [
-                r
-                for r in range(2, support.max_row + 1)
-                if support.cell(r, 1).value in ("PPGH", "PPGDH", "PPGH/PPGDH")
-            ]
-            self.assertEqual(support.cell(manual_row, 6).value, "=1+2")
-            self.assertEqual(support.cell(manual_row, 12).value, "=3+4")
-            self.assertEqual(
-                workbook["RESUMO GASTOS"]["F8"].value, f"=APOIO!D{manual_row}"
-            )
-            self.assertEqual(
-                workbook["RESUMO GASTOS"]["M8"].value, "=COUNT('BASE VIAGENS'!L2:L3)"
-            )
-            self.assertEqual(len(history), 1)
-            self.assertEqual(support.cell(history[0], 1).value, "PPGH/PPGDH")
-            self.assertEqual(
-                [support.cell(history[0], c).value for c in (4, 5)], [500, 800]
-            )
+            final_template_fixture(template)
+            trip = make_trip("111111/26")
+            trip.situacao_da_viagem = "Cancelada"
+            trip.restituicao_r = -44
+            trip.total_da_viagem_r = 156
+            write_existing_workbook(current, [trip], {"111111/26": "AGRONOMIA"})
+            for decision, expected in ((None, "Pendente"), ("Não", 0), ("Sim", 156)):
+                with self.subTest(decision=decision):
+                    book = load_workbook(current)
+                    book["BASE VIAGENS"]["R2"] = decision
+                    book.save(current)
+                    book.close()
+                    candidate.unlink(missing_ok=True)
+                    xlsx_output.build_candidate(
+                        [trip], current, candidate, template_path=template
+                    )
+                    recalculate_workbook(candidate)
+                    cached = load_workbook(candidate, data_only=True)
+                    try:
+                        self.assertEqual(cached["BASE VIAGENS"]["I2"].value, -44)
+                        self.assertEqual(cached["BASE VIAGENS"]["K2"].value, 156)
+                        self.assertEqual(cached["RESUMO GASTOS"]["F7"].value, expected)
+                        self.assertEqual(cached["RESUMO GASTOS"]["F20"].value, expected)
+                    finally:
+                        cached.close()

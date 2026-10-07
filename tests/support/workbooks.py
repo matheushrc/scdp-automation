@@ -4,15 +4,11 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.writer.theme import theme_xml
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from scdp_automation.relatorio import Viagem
-from scdp_automation.xlsx_output import (
-    BASE_HEADERS,
-    create_workbook_template,
-    summarize_trips,
-)
+from scdp_automation.xlsx_models import summarize_trips
+from scdp_automation.xlsx_validation import BASE_HEADERS
 
 
 def final_template_fixture(path: Path) -> None:
@@ -76,16 +72,61 @@ def final_template_fixture(path: Path) -> None:
     summary.merge_cells("B2:I2")
     summary["M2"] = date(2026, 1, 1)
     summary["M2"].number_format = "dd/mm/yyyy"
-    summary["B7"] = "Agronomia"
-    summary["E7"] = '=SUMIF(ApoioA,"AGRONOMIA",ApoioD)'
-    summary["F7"] = '=SUMIF(ApoioA,"AGRONOMIA",ApoioM)'
-    summary["G7"] = '=IF(AND(ISNUMBER(E7),ISNUMBER(F7)),E7-F7,"Pendente")'
+    # Nine representative final rows exercise financial rules without rebuilding
+    # the removed legacy catalogue or presentation generator.
+    for row, code in (
+        (7, "AGRONOMIA"),
+        (8, "PPGE"),
+        (9, "PPGEL"),
+        (10, "HISTÓRIA"),
+        (11, "PPGH/PPGDH"),
+        (12, "DIREÇÃO"),
+        (13, "AFASTAMENTO"),
+    ):
+        summary.cell(row, 2, code)
+        for output, amounts in (("E", "D"), ("I", "E"), ("J", "G")):
+            formula = f"SUMIF(ApoioA,$B{row},Apoio{amounts})"
+            if code == "DIREÇÃO":
+                formula += f'+SUMIF(ApoioA,"DIREÇÃO -*",Apoio{amounts})'
+            weight = {"PPGE": "J", "PPGEL": "K", "PPGH/PPGDH": "L"}.get(code)
+            if weight:
+                formula += (
+                    f'+SUMPRODUCT(--(ApoioA="PPGEL +"),Apoio{weight},Apoio{amounts})'
+                )
+            summary[f"{output}{row}"] = "=" + formula
+        criterion = '"DIREÇÃO*"' if code == "DIREÇÃO" else f"$B{row}"
+        charged = f'SUMIFS(ViagensK,ViagensM,{criterion},ViagensC,"<>Cancelada")+SUMIFS(ViagensK,ViagensM,{criterion},ViagensC,"Cancelada",ViagensN,"Sim")'
+        pending = f'COUNTIFS(ViagensM,{criterion},ViagensC,"Cancelada",ViagensN,"")'
+        if weight:
+            split_charged = 'SUMIFS(ViagensK,ViagensM,"PPGEL +",ViagensC,"<>Cancelada")+SUMIFS(ViagensK,ViagensM,"PPGEL +",ViagensC,"Cancelada",ViagensN,"Sim")'
+            charged += f'+SUMIF(ApoioA,"PPGEL +",Apoio{weight})*({split_charged})'
+            pending += f'+SUMIF(ApoioA,"PPGEL +",Apoio{weight})*COUNTIFS(ViagensM,"PPGEL +",ViagensC,"Cancelada",ViagensN,"")'
+        summary[f"F{row}"] = f'=IF({pending}>0,"Pendente",{charged})'
+        summary[f"C{row}"] = f"=E{row}+I{row}"
+        for output, first, second in (("G", "E", "F"), ("K", "I", "J")):
+            summary[f"{output}{row}"] = (
+                f'=IF(AND(ISNUMBER({first}{row}),ISNUMBER({second}{row})),{first}{row}-{second}{row},"Pendente")'
+            )
+        summary[f"M{row}"] = (
+            f'=IF(AND(ISNUMBER(G{row}),ISNUMBER(K{row})),G{row}+K{row},"Pendente")'
+        )
+    summary["B20"] = "TOTAL"
+    summary["C20"] = "=SUM(ApoioD)+SUM(ApoioE)"
+    summary["F20"] = (
+        '=IF(COUNTIFS(ViagensC,"Cancelada",ViagensN,"",ViagensA,"<>")>0,"Pendente",SUMIFS(ViagensK,ViagensC,"<>Cancelada")+SUMIFS(ViagensK,ViagensC,"Cancelada",ViagensN,"Sim"))'
+    )
+    summary["J20"] = "=SUM(ApoioG)"
     for sheet, prefix, columns, height_row in (
         ("APOIO", "Apoio", "ABCDEFGHJKLM", 1),
         ("BASE VIAGENS", "Viagens", "ABCDEFGHIJKLMNOPQ", 2),
         ("RESUMO GASTOS", "Resumo", "BCDEFGHIJKLMNOP", 3),
     ):
-        summary.cell(height_row, 18, f"=MAX(1,COUNTA('{sheet}'!A:A)-1)")
+        key = "B" if sheet == "RESUMO GASTOS" else "A"
+        summary.cell(
+            height_row,
+            18,
+            f"""=MAX(1,IFERROR(LOOKUP(2,1/('{sheet}'!${key}:${key}<>""),ROW('{sheet}'!${key}:${key}))-1,1))""",
+        )
         for column in columns:
             actual_column = (
                 {"L": "P", "M": "Q", "N": "R", "O": "L", "P": "M", "Q": "N"}.get(
@@ -141,256 +182,6 @@ def final_template_fixture(path: Path) -> None:
     )
     workbook.save(path)
     workbook.close()
-
-
-def reference_fixture(path: Path) -> None:
-    workbook = Workbook()
-    workbook._fonts[0] = Font(name="Arial", size=10)
-    workbook.loaded_theme = theme_xml.replace("4F81BD", "123456").encode()
-    base = workbook.active
-    base.title = "BD D&P"
-    support = workbook.create_sheet("APOIO")
-    summary = workbook.create_sheet("RESUMO GASTOS")
-    workbook.create_sheet("CONSULTA ANALÍTICA")
-    labels = (
-        "ADMINISTRAÇÃO",
-        "AGRONOMIA",
-        "C COMPUTAÇÃO",
-        "C ECONÔMICAS (NOVO)",
-        "CIÊNCIAS SOCIAIS",
-        "ENFERMAGEM",
-        "ENG AMBIENTAL",
-        "ENG CIVIL (NOVO)",
-        "FILOSOFIA",
-        "GEOGRAFIA",
-        "HISTÓRIA",
-        "LETRAS",
-        "MATEMÁTICA",
-        "MEDICINA",
-        "PEDAGOGIA",
-        "PPGCB - C Biomédicas (a partir de 2021)",
-        "PPGE - Educação",
-        "PPGEL - Estudos Linguísticos",
-        "PPGEnf - Enfermagem",
-        "PPGFil - Filosofia (a partir de 2019)",
-        "PPGGeo - Geografia (a partir de 2019)",
-        "PPGH - História (a partir de 2017)",
-        "PROFMAT - Matemática",
-        "PROFIAP - Prof em Adm Pública",
-        "PPGDH - Dr História",
-        "LS Enf em Oncologia",
-        "OUTROS",
-        "RESOLUÇÃO 049/2022-CONSUNI/CPPGEC",
-    )
-    codes = (
-        "ADMINISTRAÇÃO",
-        "AGRONOMIA",
-        "C COMPUTAÇÃO",
-        "C ECONÔMICAS",
-        "CIÊNCIAS SOCIAIS",
-        "ENFERMAGEM",
-        "ENG AMBIENTAL",
-        "ENGENHARIA CIVIL",
-        "FILOSOFIA",
-        "GEOGRAFIA",
-        "HISTÓRIA",
-        "LETRAS",
-        "MATEMÁTICA",
-        "MEDICINA",
-        "PEDAGOGIA",
-        "PPGCB",
-        "PPGE",
-        "PPGEL",
-        "PPGEnf",
-        "PPGFil",
-        "PPGGeo",
-        "PPGH",
-        "PROFMAT",
-        "PROFIAP",
-        "PPGDH",
-        "LS Enf em Oncologia",
-        "DIREÇÃO",
-        "CAPPG - Res 49",
-    )
-    for row, (label, code) in enumerate(zip(labels, codes, strict=True), 7):
-        support.cell(row, 2, label)
-        support.cell(row, 3, code)
-        support.cell(row, 22, 200.0)
-        support.cell(row, 25, 150.0)
-        support.cell(row, 13, f"=V{row}")
-        support.cell(row, 16, f"=Y{row}")
-        support.cell(row, 11, 9999.0)  # Not the summary's allocation.
-    support["I57"] = "PPGEL +"
-    support["J57"] = 156
-    for row, label in ((58, "PPGE"), (59, "PPGEL"), (60, "PPGH")):
-        support.cell(row, 9, label)
-        support.cell(row, 10, 52)
-    for row, label in list(zip(range(7, 22), labels[:15], strict=True)) + [
-        (26, labels[15]),
-        (27, labels[16]),
-        (28, labels[17]),
-        (29, labels[18]),
-        (30, labels[19]),
-        (31, labels[20]),
-        (32, labels[21]),
-        (33, labels[23]),
-        (34, labels[22]),
-        (35, labels[25]),
-        (41, labels[26]),
-        (43, labels[27]),
-    ]:
-        summary.cell(row, 2, label)
-        summary.cell(row, 3, 1000.0)
-        summary.cell(row, 5, 400.0)
-        summary.cell(row, 9, f"=C{row}-E{row}")
-        summary.cell(row, 6, f"=VLOOKUP(B{row},APOIO!$B$7:$F$42,3,FALSE)")
-    summary["B2"] = "RESUMO DE GASTOS - Diárias - Passagens - Transportes"
-    summary["B3"] = "ASSESSORIA - Campus Exemplo"
-    for row, title in (
-        (5, "CURSOS DE GRADUAÇÃO"),
-        (24, "PROGRAMAS DE PÓS"),
-        (38, "OUTROS (Administrativo)"),
-    ):
-        summary.cell(row, 2, title)
-        summary.cell(row, 3, "Recurso Total")
-        summary.cell(row, 5, "Diárias & Passagens")
-        summary.cell(row, 9, "Transportes")
-        summary.cell(row, 13, "SALDO GERAL")
-        for column, text in (
-            (5, "Distribuído"),
-            (6, "Utilizado"),
-            (7, "Saldo"),
-            (9, "Distribuído"),
-            (10, "Utilizado"),
-            (11, "Saldo"),
-        ):
-            summary.cell(row + 1, column, text)
-    for merged in (
-        "B2:I2",
-        "B3:I3",
-        "B5:B6",
-        "C5:C6",
-        "E5:G5",
-        "I5:K5",
-        "M5:M6",
-        "B24:B25",
-        "C24:C25",
-        "E24:G24",
-        "I24:K24",
-        "M24:M25",
-        "B38:B39",
-        "C38:C39",
-        "E38:G38",
-        "I38:K38",
-        "M38:M39",
-    ):
-        summary.merge_cells(merged)
-    for row, text in (
-        (22, "TOTAL CURSOS GRADUAÇÃO"),
-        (36, "TOTAL PROGRAMAS PÓS-GRADUAÇÃO"),
-        (45, "TOTAL (Diárias, Passagens, Transportes)"),
-        (48, "OBS.: DIÁRIAS - OUTROS (ADMINISTRATIVO)"),
-        (58, "TOTAL"),
-    ):
-        summary.cell(row, 2, text)
-    for row, text in enumerate(
-        (
-            "Direção",
-            "AGAS",
-            "Banca de Libra",
-            "CAAEX",
-            "Empresa Junior",
-            "StartUP Summit",
-            "StartUp Weekend",
-            "Sunset",
-        ),
-        50,
-    ):
-        summary.cell(row, 2, text)
-    for row in summary.iter_rows(min_row=1, max_row=58, max_col=13):
-        for cell in row:
-            cell.font = Font(name="Liberation Sans", size=10, color="123456")
-            if cell.__class__.__name__ == "MergedCell":
-                continue
-            cell.fill = PatternFill("solid", fgColor="DDEEFF")
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = Border(bottom=Side(style="thin", color="112233"))
-            cell.number_format = "#,##0.00"
-    summary.column_dimensions["B"].width = 44
-    summary.column_dimensions["C"].width = 17
-    summary.row_dimensions[5].height = 32
-    summary.print_area = "B2:M58"
-    summary.sheet_view.showGridLines = False
-    summary.page_setup.orientation = "landscape"
-    for row, code in ((5, "AGRONOMIA"), (11, None), (17, "PPGEL +")):
-        pcdp = "999001/26" if row != 17 else "999002/26-1C"
-        base.cell(row, 4, pcdp)
-        base.cell(row, 5, "Pessoa Exemplo")
-        base.cell(row, 9, "Autorizada")
-        if code:
-            base.cell(
-                row, 2, "SEG 1 GRADUAÇÃO" if code == "AGRONOMIA" else "SEG 2 MESTRADO"
-            )
-            base.cell(row, 3, code)
-        base.cell(row + 3, 15, "Sub-Total")
-        for col, value in ((16, 2.5), (17, 100), (18, 50)):
-            base.cell(row + 3, col, value)
-        base.cell(row + 4, 16, "Total da Viagem (R$)")
-        for col, value in ((6, 10), (9, 5), (12, -2), (15, 3), (19, 156)):
-            base.cell(row + 4, col, value)
-    workbook.save(path)
-    workbook.close()
-
-
-def restore_legacy_group_layout(workbook) -> None:
-    """Build the old support columns to exercise real upgrade paths."""
-    from unittest.mock import patch
-
-    from scdp_automation.xlsx_layout import prepare_ranges
-
-    restore_base_without_description(workbook)
-    support = workbook["APOIO"]
-    support.insert_cols(9)
-    support["I1"] = "Grupo no resumo"
-    for row in range(2, support.max_row + 1):
-        code = support.cell(row, 1).value
-        label = support.cell(row, 2).value
-        if isinstance(code, str) and code.startswith("DIREÇÃO"):
-            label = "OUTROS"
-        elif code == "CAPPG - Res 49":
-            label = "RESOLUÇÃO 049/2022-CONSUNI/CPPGEC"
-        support.cell(row, 9).value = label
-    with patch("scdp_automation.xlsx_code_summary.migrate_code_summary"):
-        prepare_ranges(workbook)
-
-
-def restore_base_without_description(workbook) -> None:
-    """Restore the previous BASE VIAGENS schema for migration tests."""
-    from scdp_automation.xlsx_adjustments import translate_base_references
-
-    base = workbook["BASE VIAGENS"]
-    if base.cell(1, 15).value != "Descrição do pedido":
-        return
-    for sheet in workbook:
-        for row in sheet:
-            for cell in row:
-                if cell.data_type == "f":
-                    cell.value = translate_base_references(
-                        cell.value, sheet.title, {16: 15, 17: 16, 18: 17}
-                    )
-    for name in workbook.defined_names.values():
-        name.attr_text = translate_base_references(
-            "=" + name.attr_text, "", {16: 15, 17: 16, 18: 17}
-        )[1:]
-    base.delete_cols(15)
-    for validation in base.data_validations.dataValidation:
-        if validation.formula1 in ("CodigosDebito", "=CodigosDebito"):
-            validation.sqref = "P2:P1048576"
-        elif validation.formula1 == '"Sim,Não"':
-            validation.sqref = "Q2:Q1048576"
-    base.conditional_formatting._cf_rules.clear()
-    base.tables["tblBaseViagens"].ref = f"A1:Q{max(2, base.max_row)}"
-    base.tables["tblBaseViagens"].tableColumns = []
 
 
 def make_trip(pcdp: str = "123456/26-2B") -> Viagem:
@@ -456,7 +247,7 @@ def write_existing_workbook(
     from openpyxl import load_workbook
     from openpyxl.formula.translate import Translator
 
-    create_workbook_template(path)
+    final_template_fixture(path)
     workbook = load_workbook(path, data_only=False)
     base = workbook["BASE VIAGENS"]
     codes = codes or {}
@@ -495,6 +286,7 @@ def write_existing_workbook(
         if code in allocations:
             support.cell(row, 4, allocations[code])
     workbook.save(path)
+    workbook.close()
 
 
 def read_base_rows(path: Path) -> dict[str, tuple[object, ...]]:

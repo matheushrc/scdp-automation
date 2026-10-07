@@ -467,7 +467,8 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
             check_session("preflight")
             preflight_extraction(*paths)
 
-        def read_previous(*_):
+        def prepare(*paths):
+            preflight(*paths)
             check_session("load")
             return []
 
@@ -493,7 +494,9 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "scdp_automation.extrator.preflight_extraction", side_effect=preflight
             ),
-            patch("scdp_automation.extrator.load_trips", side_effect=read_previous),
+            patch(
+                "scdp_automation.extrator.prepare_checkpoint_trips", side_effect=prepare
+            ),
             patch(
                 "scdp_automation.extrator.async_playwright",
                 return_value=playwright_manager,
@@ -536,6 +539,7 @@ class WorkbookPublishIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     [
                         "preflight",
                         "load",
+                        "checkpoint",
                         "browser",
                         "preflight",
                         "checkpoint",

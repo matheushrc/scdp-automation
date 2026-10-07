@@ -104,9 +104,8 @@ class PublicationPreflightTests(unittest.IsolatedAsyncioTestCase):
                 with (
                     patch.object(extrator, "configure_logging"),
                     patch.object(extrator, "parse_args", return_value=args),
-                    patch.object(
-                        extrator,
-                        "load_trips",
+                    patch(
+                        "scdp_automation.workbook_recovery.load_trips",
                         side_effect=AssertionError(
                             "checkpoint accessed before rejection"
                         ),

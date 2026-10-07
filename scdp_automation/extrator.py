@@ -20,7 +20,13 @@ from scdp_automation.config import REPO_ROOT, current_date, sync_extraction_conf
 from scdp_automation.logging_config import configure_logging
 from scdp_automation.navegador_chrome import connect_visible_chrome, select_scdp_page
 from scdp_automation.output_history import OutputHistory
-from scdp_automation.relatorio import Viagem, load_trips, parse_report_rows, save_json
+from scdp_automation.relatorio import (
+    Viagem,
+    merge_persisted_trip_fields,
+    parse_report_rows,
+    save_json,
+)
+from scdp_automation.workbook_recovery import prepare_checkpoint_trips
 from scdp_automation.xlsx_output import publish_workbook, validate_workbook_sources
 from scdp_automation.xlsx_validation import WorkbookValidationError
 
@@ -380,8 +386,10 @@ async def run(argv: list[str] | None = None) -> None:
     output = args.output
     workbook_path = args.workbook
     with OutputHistory(output, workbook_path) as history:
-        preflight_extraction(output, workbook_path)
-        previous = {v.numero_da_solicitacao: v for v in load_trips(output)}
+        previous = prepare_checkpoint_trips(output, workbook_path)
+        history.archive_previous()
+        if output.exists() or previous:
+            save_json(output, previous)
 
         async with async_playwright() as playwright:
             # Todas as abas usam o mesmo perfil Chrome e a mesma sessão autenticada.
@@ -413,13 +421,19 @@ async def run(argv: list[str] | None = None) -> None:
 
             logger.info("Coletando todas as páginas do relatório Viagem.")
             trips = await collect_listing(page)
-            for trip in trips:
-                old = previous.get(trip.numero_da_solicitacao)
-                if old is not None:
-                    trip.descricao_do_motivo_da_viagem = (
-                        old.descricao_do_motivo_da_viagem
-                    )
-                    trip.data_da_ultima_verificacao = old.data_da_ultima_verificacao
+            missing = tuple(
+                sorted(
+                    {trip.numero_da_solicitacao for trip in previous}
+                    - {trip.numero_da_solicitacao for trip in trips}
+                )
+            )
+            if missing:
+                raise WorkbookValidationError(
+                    "PCDPs do checkpoint ausentes da nova listagem; reconcilie os "
+                    "arquivos antes de continuar: " + ", ".join(missing),
+                    missing_pcdps=missing,
+                )
+            trips = merge_persisted_trip_fields(trips, previous)
             backup = save_checkpoint_and_publish(
                 trips, output, workbook_path, history=history
             )

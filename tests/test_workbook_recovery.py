@@ -8,6 +8,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from openpyxl import load_workbook
+from openpyxl.chart import BarChart
+from openpyxl.workbook.defined_name import DefinedName
 from pydantic import ValidationError
 
 from scdp_automation import extrator, workbook_recovery, xlsx_output
@@ -271,6 +273,89 @@ class WorkbookRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises((WorkbookValidationError, ValidationError)):
                     workbook_recovery.recreate_workbook(self.checkpoint, self.workbook)
                 self.assertEqual(self.snapshot(), before)
+
+    async def test_equal_local_names_allow_prepare_recovery_and_extraction(self):
+        for path in (self.workbook, self.template):
+            book = load_workbook(path)
+            book["BASE VIAGENS"].defined_names.add(
+                DefinedName(
+                    "ManualKey", attr_text="'BASE VIAGENS'!$A$2", localSheetId=0
+                )
+            )
+            if path == self.workbook:
+                book["APOIO"]["K12"] = "='BASE VIAGENS'!ManualKey"
+            book.save(path)
+            book.close()
+        self.edit_manual()
+        before = self.snapshot()
+        prepared = workbook_recovery.prepare_checkpoint_trips(
+            self.checkpoint, self.workbook
+        )
+        self.assertEqual(prepared[0].codigo_de_debito, "AGRONOMIA")
+        self.assertEqual(self.snapshot(), before)
+        workbook_recovery.recreate_workbook(self.checkpoint, self.workbook)
+        self.assertEqual(load_trips(self.checkpoint), prepared)
+        await self.run_extraction(self.trips)
+        actual = load_workbook(self.workbook)
+        self.addCleanup(actual.close)
+        self.assertEqual(actual["APOIO"]["K12"].value, "='BASE VIAGENS'!ManualKey")
+        self.assertEqual(
+            actual["BASE VIAGENS"].defined_names["ManualKey"].attr_text,
+            "'BASE VIAGENS'!$A$2",
+        )
+
+    async def test_base_reconstruction_sources_fail_before_writes_or_browser(self):
+        original = self.snapshot()
+        for failure in ("local name", "drawing", "drawing without output"):
+            with self.subTest(failure=failure):
+                for path, contents in original.items():
+                    (self.root / path).write_bytes(contents)
+                self.edit_manual()
+                template = load_workbook(self.template)
+                if failure == "local name":
+                    book = load_workbook(self.workbook)
+                    book["BASE VIAGENS"].defined_names.add(
+                        DefinedName(
+                            "ManualKey", attr_text="'BASE VIAGENS'!$A$2", localSheetId=0
+                        )
+                    )
+                    book["APOIO"]["K12"] = "='BASE VIAGENS'!ManualKey"
+                    book.save(self.workbook)
+                    book.close()
+                    template["BASE VIAGENS"].defined_names.add(
+                        DefinedName(
+                            "ManualKey", attr_text="'BASE VIAGENS'!$B$2", localSheetId=0
+                        )
+                    )
+                    message = "ManualKey.*reconcil"
+                else:
+                    template["BASE VIAGENS"].add_chart(BarChart(), "A10")
+                    if failure == "drawing without output":
+                        self.workbook.unlink()
+                    message = "suportad"
+                template.save(self.template)
+                template.close()
+                before = self.snapshot()
+                for lifecycle in ("prepare", "offline", "extract"):
+                    with self.subTest(lifecycle=lifecycle):
+                        with self.assertRaisesRegex(WorkbookValidationError, message):
+                            if lifecycle == "prepare":
+                                workbook_recovery.prepare_checkpoint_trips(
+                                    self.checkpoint, self.workbook
+                                )
+                            elif lifecycle == "offline":
+                                workbook_recovery.recreate_workbook(
+                                    self.checkpoint, self.workbook
+                                )
+                            else:
+                                await self.run_extraction(self.trips, fail_browser=True)
+                        self.assertEqual(self.snapshot(), before)
+                        # Restore files after each lifecycle so RED observations are independent.
+                    for path in list(self.root.rglob("*")):
+                        if path.is_file() and path.relative_to(self.root) not in before:
+                            path.unlink()
+                    for path, contents in before.items():
+                        (self.root / path).write_bytes(contents)
 
     def test_unknown_json_only_code_fails_before_writes(self):
         self.workbook.unlink()

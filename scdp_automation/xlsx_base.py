@@ -18,13 +18,17 @@ def _copy_style(source, target) -> None:
     target.number_format = source.number_format
 
 
-def rebuild_base_from_template(workbook: Workbook, template: Workbook) -> Worksheet:
-    """Rebuild BASE, retaining the destination container and all manual sheets."""
+def validate_base_reconstruction_sources(
+    template: Workbook, workbook: Workbook | None = None
+) -> None:
+    """Reject source-known incompatibilities without changing either workbook."""
     source = template["BASE VIAGENS"]
     if source._charts or source._images or source._pivots or source.legacy_drawing:
         raise WorkbookValidationError(
             "BASE VIAGENS do template contém desenho ou elemento não suportado."
         )
+    if workbook is None:
+        return
     old = workbook["BASE VIAGENS"]
     managed_names = {
         name.casefold() for name in MANAGED_BASE_NAMES | {"SCDPLayoutVersion"}
@@ -40,6 +44,17 @@ def rebuild_base_from_template(workbook: Workbook, template: Workbook) -> Worksh
             raise WorkbookValidationError(
                 f"BASE VIAGENS: intervalo local {name.name} diverge entre output e template; reconcilie a definição manual antes de reconstruir."
             )
+
+
+def rebuild_base_from_template(workbook: Workbook, template: Workbook) -> Worksheet:
+    """Rebuild BASE, retaining the destination container and all manual sheets."""
+    validate_base_reconstruction_sources(template, workbook)
+    source = template["BASE VIAGENS"]
+    old = workbook["BASE VIAGENS"]
+    managed_names = {
+        name.casefold() for name in MANAGED_BASE_NAMES | {"SCDPLayoutVersion"}
+    }
+    old_names = {name.name.casefold(): name for name in old.defined_names.values()}
     position = workbook.index(old)
     workbook.remove(old)
     target = workbook.create_sheet("BASE VIAGENS", position)

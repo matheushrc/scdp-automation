@@ -20,7 +20,10 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from scdp_automation.config import REPO_ROOT
 from scdp_automation.relatorio import Viagem
-from scdp_automation.xlsx_base import rebuild_base_from_template
+from scdp_automation.xlsx_base import (
+    rebuild_base_from_template,
+    validate_base_reconstruction_sources,
+)
 from scdp_automation.xlsx_manual import (
     apply_base_manual_values,
     read_base_manual_values,
@@ -136,12 +139,19 @@ def validate_workbook_sources(
             "Template e workbook publicado devem ter caminhos separados."
         )
     template = _load_workbook_for_refresh(source, role="Template obrigatório")
-    template.close()
-    if current_path.exists():
-        current = _load_workbook_for_refresh(
-            current_path, role="Workbook publicado", template_path=source
-        )
-        current.close()
+    try:
+        if current_path.exists():
+            current = _load_workbook_for_refresh(
+                current_path, role="Workbook publicado", template_path=source
+            )
+            try:
+                validate_base_reconstruction_sources(template, current)
+            finally:
+                current.close()
+        else:
+            validate_base_reconstruction_sources(template)
+    finally:
+        template.close()
 
 
 def _extend_base_choices(base: Worksheet) -> None:

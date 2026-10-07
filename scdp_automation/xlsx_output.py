@@ -293,6 +293,7 @@ def publish_workbook(
     """Validate and atomically publish; OutputHistory owns session serialization."""
     workbook_path.parent.mkdir(parents=True, exist_ok=True)
     candidate = _candidate_path_for(workbook_path)
+    candidate_retained = False
     try:
         if template_path is None:
             build_candidate(trips, workbook_path, candidate)
@@ -305,12 +306,23 @@ def publish_workbook(
             os.replace(candidate, workbook_path)
         except OSError as error:
             recovery_directory = workbook_path.parent / "backup"
-            recovery_directory.mkdir(parents=True, exist_ok=True)
             recovery = recovery_directory / f"recovery.{uuid4().hex}.xlsx"
-            candidate.rename(recovery)
+            try:
+                recovery_directory.mkdir(parents=True, exist_ok=True)
+                candidate.rename(recovery)
+            except OSError as recovery_error:
+                candidate_retained = True
+                surviving_path = candidate if candidate.exists() else recovery
+                raise WorkbookPublishError(
+                    "Não foi possível substituir o workbook nem mover a candidata "
+                    f"para recuperação: {recovery_error}. O candidato validado "
+                    f"permanece em {surviving_path}; feche o arquivo no Excel e "
+                    "tente novamente."
+                ) from error
             raise WorkbookPublishError(
                 "Não foi possível substituir o workbook; feche o arquivo no Excel e "
                 f"tente novamente. O candidato validado permanece em {recovery}."
             ) from error
     finally:
-        candidate.unlink(missing_ok=True)
+        if not candidate_retained:
+            candidate.unlink(missing_ok=True)

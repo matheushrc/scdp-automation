@@ -343,6 +343,69 @@ class WorkbookPublicationTests(unittest.TestCase):
                 recovered["BASE VIAGENS"]["A2"].value, trip.numero_da_solicitacao
             )
 
+    def test_recovery_transfer_failure_retains_validated_candidate(self) -> None:
+        from openpyxl import load_workbook
+
+        from scdp_automation.xlsx_output import WorkbookPublishError
+
+        mkdir = Path.mkdir
+        for failure_stage in ("mkdir", "rename"):
+            with (
+                self.subTest(failure_stage=failure_stage),
+                TemporaryDirectory() as directory,
+            ):
+                path = Path(directory) / "gastos.xlsx"
+                publish_workbook([make_trip()], path)
+                original_bytes = path.read_bytes()
+
+                def fail_recovery_mkdir(target, *args, **kwargs):
+                    if target.name == "backup":
+                        raise PermissionError("recovery unavailable")
+                    return mkdir(target, *args, **kwargs)
+
+                transfer_failure = (
+                    patch.object(Path, "mkdir", new=fail_recovery_mkdir)
+                    if failure_stage == "mkdir"
+                    else patch.object(
+                        Path,
+                        "rename",
+                        side_effect=PermissionError("recovery unavailable"),
+                    )
+                )
+                with (
+                    patch(
+                        "scdp_automation.xlsx_output.os.replace",
+                        side_effect=PermissionError("Excel holds workbook"),
+                    ),
+                    transfer_failure,
+                    self.assertRaises(WorkbookPublishError) as raised,
+                ):
+                    publish_workbook([make_trip(), make_trip(pcdp="000002/26")], path)
+                self.assertEqual(path.read_bytes(), original_bytes)
+                candidates = list(Path(directory).glob("*.candidate.xlsx"))
+                self.assertEqual(len(candidates), 1)
+                self.assertIsInstance(raised.exception, WorkbookPublishError)
+                self.assertIn(str(candidates[0]), str(raised.exception))
+                self.assertIn("recovery unavailable", str(raised.exception))
+                self.assertIsInstance(raised.exception.__cause__, PermissionError)
+                self.assertEqual(
+                    str(raised.exception.__cause__), "Excel holds workbook"
+                )
+                candidate = load_workbook(candidates[0])
+                try:
+                    self.assertEqual(
+                        {
+                            candidate["BASE VIAGENS"]["A2"].value,
+                            candidate["BASE VIAGENS"]["A3"].value,
+                        },
+                        {"123456/26-2B", "000002/26"},
+                    )
+                finally:
+                    candidate.close()
+                self.assertFalse(
+                    list((Path(directory) / "backup").glob("recovery.*.xlsx"))
+                )
+
 
 class WorkbookValidationTests(unittest.TestCase):
     def setUp(self):

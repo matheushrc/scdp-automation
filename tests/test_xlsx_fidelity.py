@@ -251,3 +251,58 @@ class FidelityTests(unittest.TestCase):
         updated = load_workbook(self.candidate)
         self.addCleanup(updated.close)
         self.assertIsNone(updated["BASE VIAGENS"]["N2"].value)
+
+    def test_stale_base_height_cannot_exclude_second_classified_trip(self):
+        from tests.support.workbooks import write_existing_workbook
+
+        trips = [make_trip("111111/26"), make_trip("222222/26")]
+        trips[0].total_da_viagem_r = 100
+        trips[1].total_da_viagem_r = 200
+        write_existing_workbook(
+            self.current, trips, {"111111/26": "AGRONOMIA", "222222/26": "PPGE"}
+        )
+        book = load_workbook(self.current)
+        book["RESUMO GASTOS"]["R2"] = "=1"
+        book.save(self.current)
+        book.close()
+        original = self.current.read_bytes()
+        template_bytes = self.template.read_bytes()
+        with self.assertRaises(WorkbookValidationError):
+            xlsx_output.publish_workbook(
+                trips, self.current, template_path=self.template
+            )
+        self.assertEqual(self.current.read_bytes(), original)
+        self.assertEqual(self.template.read_bytes(), template_bytes)
+        self.assertEqual(list(self.root.glob("*.candidate.xlsx")), [])
+        self.assertEqual(list(self.root.glob("*.backup.*.xlsx")), [])
+
+    def test_invalid_range_heights_reject_template_and_output_without_changes(self):
+        for path in (self.template, self.current):
+            for coordinate in ("R1", "R2", "R3"):
+                for value in (
+                    None,
+                    "=1",
+                    "=MAX(1,IFERROR(LOOKUP(2,1/('ERRADA'!$A:$A<>\"\"),ROW('ERRADA'!$A:$A))-1,1))",
+                ):
+                    with self.subTest(
+                        path=path.name, coordinate=coordinate, value=value
+                    ):
+                        self.candidate.unlink(missing_ok=True)
+                        final_template_fixture(self.template)
+                        final_template_fixture(self.current)
+                        book = load_workbook(path)
+                        book["RESUMO GASTOS"][coordinate] = value
+                        book.save(path)
+                        book.close()
+                        template_bytes = self.template.read_bytes()
+                        current_bytes = self.current.read_bytes()
+                        with self.assertRaises(WorkbookValidationError):
+                            xlsx_output.build_candidate(
+                                [],
+                                self.current,
+                                self.candidate,
+                                template_path=self.template,
+                            )
+                        self.assertEqual(self.template.read_bytes(), template_bytes)
+                        self.assertEqual(self.current.read_bytes(), current_bytes)
+                        self.assertFalse(self.candidate.exists())

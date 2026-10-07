@@ -476,3 +476,16 @@ class WorkbookValidationTests(unittest.TestCase):
         ].attr_text.replace("$F$1", "$E$1")
         with self.assertRaises(WorkbookValidationError):
             validate_workbook(self.book)
+
+    def test_essential_range_heights_are_validated_without_repair(self):
+        from scdp_automation.xlsx_validation import validate_workbook
+
+        summary = self.book["RESUMO GASTOS"]
+        for coordinate in ("R1", "R2", "R3"):
+            with self.subTest(coordinate=coordinate):
+                original = summary[coordinate].value
+                summary[coordinate] = "=1"
+                with self.assertRaises(WorkbookValidationError):
+                    validate_workbook(self.book)
+                self.assertEqual(summary[coordinate].value, "=1")
+                summary[coordinate] = original

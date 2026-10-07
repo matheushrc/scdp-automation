@@ -103,6 +103,18 @@ def validate_workbook(workbook: Workbook) -> None:
         )
         if (min_column, min_row, max_column) != (1, 1, last_column) or max_row < 2:
             raise WorkbookValidationError(f"A tabela {sheet.title} está malformada.")
+    # OFFSET names depend on these three dynamic heights. A stale constant can
+    # omit valid financial rows even when the names themselves are unchanged.
+    for row, sheet, key in (
+        (1, "APOIO", "A"),
+        (2, "BASE VIAGENS", "A"),
+        (3, "RESUMO GASTOS", "B"),
+    ):
+        expected = f"""=MAX(1,IFERROR(LOOKUP(2,1/('{sheet}'!${key}:${key}<>""),ROW('{sheet}'!${key}:${key}))-1,1))"""
+        if not same_formula(workbook["RESUMO GASTOS"].cell(row, 18).value, expected):
+            raise WorkbookValidationError(
+                f"Altura do intervalo essencial ausente ou inválida: RESUMO GASTOS!R{row}."
+            )
     required_names = {
         "CodigosDebito": _named_range("APOIO", "A", 1),
         "ApoioCatalogo": _named_range("APOIO", "A", 1, 3),
